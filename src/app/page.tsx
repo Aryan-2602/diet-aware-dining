@@ -322,7 +322,7 @@ export default function Home() {
           including mid-search. It is marketing chrome, so it belongs on
           the landing page; everywhere else gets one attribution line. */}
       {currentPage === "landing" ? (
-      <footer className="bg-gray-900 text-gray-400 mt-16">
+      <footer className="bg-gray-900 text-gray-400 mt-16 pb-20 md:pb-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div>
@@ -349,7 +349,7 @@ export default function Home() {
         </div>
       </footer>
       ) : (
-        <footer className="border-t border-gray-100 mt-8 py-6">
+        <footer className="border-t border-gray-100 mt-8 py-6 pb-24 md:pb-6">
           <p className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-xs text-gray-400">
             Data from OpenStreetMap contributors, via the Overpass API and
             Nominatim.

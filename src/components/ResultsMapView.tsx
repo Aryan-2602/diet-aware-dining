@@ -200,20 +200,26 @@ export function ResultsMapView() {
           <div className="lg:col-span-2 lg:sticky lg:top-24 lg:self-start">
             <div className="rounded-xl overflow-hidden shadow-sm border border-gray-100 bg-white">
               <iframe
-                title="Restaurant locations"
+                title={`Area searched near ${searchMeta?.resolvedLocation ?? "your location"}`}
                 width="100%"
                 height="400"
                 style={{ border: 0 }}
                 loading="lazy"
                 referrerPolicy="no-referrer-when-downgrade"
-                src={`https://www.openstreetmap.org/export/embed.html?bbox=${mapData.bounds.west},${mapData.bounds.south},${mapData.bounds.east},${mapData.bounds.north}&layer=mapnik&marker=${mapData.center.lat},${mapData.center.lng}`}
+                // No `marker` parameter. It previously pinned mapData.center —
+                // the centroid of the results — which is not a restaurant, so
+                // the map showed one confident pin at a place nobody could eat.
+                // OSM's embed accepts only a single marker, so there is no way
+                // to plot all N here; the bbox frames the area instead and each
+                // card links to its own exact location.
+                src={`https://www.openstreetmap.org/export/embed.html?bbox=${mapData.bounds.west},${mapData.bounds.south},${mapData.bounds.east},${mapData.bounds.north}&layer=mapnik`}
               />
             </div>
-            {metadata && (
-              <p className="text-[10px] text-gray-400 mt-2 text-center">
-                Map data © OpenStreetMap contributors
-              </p>
-            )}
+            <p className="text-[10px] text-gray-400 mt-2 text-center">
+              Area searched · {mapData.markers.length} result
+              {mapData.markers.length === 1 ? "" : "s"} · Map data ©
+              OpenStreetMap contributors
+            </p>
           </div>
         )}
 
