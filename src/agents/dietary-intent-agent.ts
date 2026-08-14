@@ -1,6 +1,6 @@
 import { DietaryRequest, ParsedIntent } from "@/types";
 import {
-  callClaude,
+  callLLM,
   parseJSONResponse,
   LLMUnavailableError,
 } from "@/lib/llm-client";
@@ -20,7 +20,7 @@ interface LLMExtractedIntent {
  * into structured intent, identifying dietary needs, restrictions,
  * location, cuisine preferences, and meal type.
  *
- * Extraction is LLM-based (Anthropic Messages API). If the LLM is
+ * Extraction is LLM-based (OpenAI Chat Completions). If the LLM is
  * unavailable — no API key, network failure, timeout, unparseable output —
  * it falls back to the original deterministic keyword/regex parser so the
  * request still completes.
@@ -125,7 +125,7 @@ export class DietaryIntentAgent {
       )}`,
     ].join("\n");
 
-    const raw = await callClaude({ system, user });
+    const raw = await callLLM({ system, user, jsonMode: true });
 
     let parsed: LLMExtractedIntent;
     try {

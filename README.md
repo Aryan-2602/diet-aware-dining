@@ -138,7 +138,7 @@ src/
 
 ## 🔄 Agent Pipeline Flow
 
-1. **DietaryIntentAgent** — Extracts dietary needs, allergies, cuisine, location, price range, and meal type from natural language using an LLM call (Anthropic Messages API), constrained to a controlled vocabulary and validated field-by-field before use. Requires `ANTHROPIC_API_KEY` (see `.env.example`); if the key is missing or the API call fails, it falls back to a deterministic keyword/regex parser so the request still completes.
+1. **DietaryIntentAgent** — Extracts dietary needs, allergies, cuisine, location, price range, and meal type from natural language using an LLM call (OpenAI Chat Completions), constrained to a controlled vocabulary and validated field-by-field before use. Requires `OPENAI_API_KEY` (see `.env.example`); if the key is missing or the API call fails, it falls back to a deterministic keyword/regex parser so the request still completes.
 
 2. **ClarificationAgent** — If the location is missing or vague (e.g., "near me"), generates follow-up questions for the user.
 

@@ -1,14 +1,14 @@
 /**
- * Minimal, dependency-free Anthropic Messages API client.
+ * Minimal, dependency-free OpenAI Chat Completions client.
  *
- * Server-side only — this module reads ANTHROPIC_API_KEY from process.env and
+ * Server-side only — this module reads OPENAI_API_KEY from process.env and
  * is reached exclusively from agents invoked by Next.js API routes. It must
  * never be imported into a client component.
  */
 
-const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
-const ANTHROPIC_VERSION = "2023-06-01";
-const DEFAULT_MODEL = "claude-haiku-4-5";
+const OPENAI_CHAT_COMPLETIONS_URL =
+  "https://api.openai.com/v1/chat/completions";
+const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_MAX_TOKENS = 512;
 const DEFAULT_TIMEOUT_MS = 8000;
 
@@ -25,35 +25,38 @@ export class LLMUnavailableError extends Error {
   }
 }
 
-export interface CallClaudeOptions {
+export interface CallLLMOptions {
   system: string;
   user: string;
   maxTokens?: number;
   timeoutMs?: number;
+  /**
+   * Ask the API to guarantee syntactically valid JSON. The prompt must
+   * mention JSON for the API to accept this.
+   */
+  jsonMode?: boolean;
 }
 
-interface AnthropicContentBlock {
-  type: string;
-  text?: string;
-}
-
-interface AnthropicMessagesResponse {
-  content?: AnthropicContentBlock[];
+interface OpenAIChatCompletionResponse {
+  choices?: Array<{
+    message?: { content?: string | null };
+  }>;
 }
 
 /**
- * Sends a single-turn request to the Messages API and returns the text of the
- * first `type: "text"` block in the response.
+ * Sends a single-turn request to the Chat Completions API and returns the
+ * assistant message content.
  */
-export async function callClaude({
+export async function callLLM({
   system,
   user,
   maxTokens = DEFAULT_MAX_TOKENS,
   timeoutMs = DEFAULT_TIMEOUT_MS,
-}: CallClaudeOptions): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  jsonMode = false,
+}: CallLLMOptions): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw new LLMUnavailableError("ANTHROPIC_API_KEY is not set");
+    throw new LLMUnavailableError("OPENAI_API_KEY is not set");
   }
 
   const controller = new AbortController();
@@ -61,29 +64,31 @@ export async function callClaude({
 
   let response: Response;
   try {
-    response = await fetch(ANTHROPIC_MESSAGES_URL, {
+    response = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
       method: "POST",
       headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": ANTHROPIC_VERSION,
+        authorization: `Bearer ${apiKey}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: process.env.ANTHROPIC_MODEL || DEFAULT_MODEL,
-        max_tokens: maxTokens,
-        system,
-        messages: [{ role: "user", content: user }],
+        model: process.env.OPENAI_MODEL || DEFAULT_MODEL,
+        max_completion_tokens: maxTokens,
+        ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
       }),
       signal: controller.signal,
     });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new LLMUnavailableError(
-        `Anthropic request timed out after ${timeoutMs}ms`
+        `OpenAI request timed out after ${timeoutMs}ms`
       );
     }
     const detail = error instanceof Error ? error.message : String(error);
-    throw new LLMUnavailableError(`Anthropic request failed: ${detail}`);
+    throw new LLMUnavailableError(`OpenAI request failed: ${detail}`);
   } finally {
     clearTimeout(timer);
   }
@@ -91,25 +96,23 @@ export async function callClaude({
   if (!response.ok) {
     const body = await response.text().catch(() => "");
     throw new LLMUnavailableError(
-      `Anthropic API returned ${response.status}${body ? `: ${body}` : ""}`
+      `OpenAI API returned ${response.status}${body ? `: ${body}` : ""}`
     );
   }
 
-  let payload: AnthropicMessagesResponse;
+  let payload: OpenAIChatCompletionResponse;
   try {
-    payload = (await response.json()) as AnthropicMessagesResponse;
+    payload = (await response.json()) as OpenAIChatCompletionResponse;
   } catch {
-    throw new LLMUnavailableError("Anthropic API returned a non-JSON body");
+    throw new LLMUnavailableError("OpenAI API returned a non-JSON body");
   }
 
-  const textBlock = payload.content?.find((block) => block.type === "text");
-  if (!textBlock?.text) {
-    throw new LLMUnavailableError(
-      "Anthropic API response contained no text block"
-    );
+  const content = payload.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new LLMUnavailableError("OpenAI API response contained no content");
   }
 
-  return textBlock.text;
+  return content;
 }
 
 /**
