@@ -54,9 +54,15 @@ OVERPASS_MIRRORS = (
 # such restaurant within 25km" -- the widest rung, the one that settles the
 # question, timed out every time and a definitive empty answer was reported as
 # an outage.
-BASE_TIMEOUT_S = 10.0
-TIMEOUT_PER_KM_S = 0.6
-MAX_TIMEOUT_S = 28.0
+#
+# Headroom over those measurements is deliberately modest (2km 8.9s, 25km
+# 19.3s). Generous per-rung timeouts sound safer but are not: the ladder has a
+# fixed budget, so every second reserved for a rung that is hanging is a second
+# taken from the rung that would have answered.
+BASE_TIMEOUT_S = 8.0
+TIMEOUT_PER_KM_S = 0.45
+MAX_TIMEOUT_S = 20.0
+
 
 # The second mirror is only brought up if the first has gone quiet for this
 # long. Firing both immediately halves latency on paper but doubles the load on

@@ -22,7 +22,6 @@ from ..tools.diet_tags import (
 )
 from ..tools.geocode import GeocodeResult, geocode
 from ..tools.overpass import (
-    MAX_ELEMENTS,
     OverpassPlace,
     distance_meters,
     search_restaurants,
@@ -121,27 +120,44 @@ class RestaurantDiscoveryAgent:
         last_error: Optional[DiscoveryError] = None
         deadline = time.monotonic() + SEARCH_BUDGET_S
 
-        radii = list(RADIUS_LADDER_M)
-        widest = len(radii) - 1
+        # The widest rung is the one that can turn "we could not tell" into an
+        # honest "there is none within 25km", so its cost is reserved up front
+        # and the narrower rungs may only spend what is left over. Budgeting
+        # rung-by-rung instead let three slow-but-successful narrow rungs eat
+        # the decisive one by a fraction of a second, which is how a search
+        # whose real answer was "no matches" came back as an outage.
+        last_index = len(RADIUS_LADDER_M) - 1
+        reserve = timeout_for_radius(RADIUS_LADDER_M[last_index])
+
         index = 0
-        #: Rung the early widen came from, so a truncated jump can resume there.
-        jumped_from: Optional[int] = None
+        while index <= last_index:
+            radius_m = RADIUS_LADDER_M[index]
+            is_widest = index == last_index
 
-        while index < len(radii):
-            radius_m = radii[index]
-
-            # Budgeted on the rung's own cost rather than the clock alone, so a
-            # rung is never started that cannot finish inside the limit. The
-            # hedge is deliberately not reserved on top: a hedged mirror runs
-            # alongside the first rather than after it, so it can only push past
-            # the deadline by HEDGE_DELAY_S, and reserving it as well cost the
-            # 10km rung -- the one that actually answers a sparse search.
-            if time.monotonic() + timeout_for_radius(radius_m) > deadline:
+            # The hedge is deliberately not reserved on top: a hedged mirror
+            # runs alongside the first rather than after it, so it can only push
+            # past the deadline by HEDGE_DELAY_S.
+            need = timeout_for_radius(radius_m) + (0.0 if is_widest else reserve)
+            if time.monotonic() + need > deadline:
+                if is_widest:
+                    logger.warning(
+                        "[Discovery] search budget spent, stopping before the "
+                        "%dm rung",
+                        radius_m,
+                    )
+                    break
+                # Affording this rung would cost the widest one. Skip ahead
+                # rather than spend the answer on a narrower question.
                 logger.warning(
-                    "[Discovery] search budget spent, stopping before the %dm rung",
+                    "[Discovery] skipping the %dm rung to keep the %dm rung "
+                    "affordable",
                     radius_m,
+                    RADIUS_LADDER_M[last_index],
                 )
-                break
+                index = last_index
+                continue
+
+            index += 1
 
             try:
                 found = await search_restaurants(
@@ -162,13 +178,6 @@ class RestaurantDiscoveryAgent:
                     error.code,
                     error.message,
                 )
-                # Deliberately walks to the next rung rather than skipping to
-                # the widest the way a barren rung does. A barren rung is
-                # information -- it answered, and there was nothing there. A
-                # lost rung is not: against a saturated mirror the next attempt
-                # is a fresh roll, and measured against live Overpass, four
-                # cheap chances beat one expensive one.
-                index += 1
                 continue
 
             places = found
@@ -177,27 +186,8 @@ class RestaurantDiscoveryAgent:
                 p for p in places if matches_all_needs(p.tags, enforceable_needs)
             ]
 
-            # The jump landed on a truncated response, so "nearest" cannot be
-            # read off it -- resume the walk from where it left off, at radii
-            # whose result counts fit under the cap.
-            if jumped_from is not None and len(places) >= MAX_ELEMENTS:
-                index, jumped_from = jumped_from + 1, None
-                continue
-
             if len(usable) >= MIN_RESULTS:
                 break
-
-            # Not one match at this radius. The intermediate rungs cost a full
-            # timeout each and cannot settle a question the widest one answers
-            # outright, so skip to it -- two requests instead of four, which is
-            # what makes an honest "nothing within 25km" affordable at all.
-            # _tightest_useful_radius rebuilds the real radius from distances.
-            if not usable and jumped_from is None and index < widest:
-                jumped_from = index
-                index = widest
-                continue
-
-            index += 1
 
         # Degrading to a partial answer is only honest while there is something
         # to show. With nothing to show and a rung that never completed, the

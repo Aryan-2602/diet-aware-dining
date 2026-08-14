@@ -452,21 +452,19 @@ def test_genuinely_empty_search_still_reports_empty():
     assert searched == 25_000
 
 
-def test_a_barren_rung_skips_straight_to_the_widest():
+def test_a_barren_search_still_reaches_the_widest_rung():
     """The reported hang: halal+gluten-free has no match at any radius.
 
-    Four rungs at a wide-radius timeout each cannot fit the function limit, so
-    the intermediate ones -- which cannot settle a question the widest answers
-    outright -- are skipped.
+    Every rung has to be reachable inside the budget, because the widest one is
+    what turns "we could not tell" into an honest "there is none within 25km".
     """
     _, searched, calls = ladder_run({2000: [], 5000: [], 10_000: [], 25_000: []})
-    assert calls == [2000, 25_000]
+    assert calls == [2000, 5000, 10_000, 25_000]
     assert searched == 25_000
 
 
-def test_a_rung_with_some_matches_still_widens_one_step():
-    """Only a *barren* rung justifies the jump; a thin one may fill in next rung."""
-    _, _, calls = ladder_run(
+def test_the_ladder_stops_at_the_first_rung_with_enough_matches():
+    _, searched, calls = ladder_run(
         {
             2000: [halal_place(1)],
             5000: [halal_place(i) for i in range(3)],
@@ -475,29 +473,36 @@ def test_a_rung_with_some_matches_still_widens_one_step():
         }
     )
     assert calls == [2000, 5000]
-
-
-def test_a_truncated_jump_resumes_the_normal_walk():
-    """At the element cap "nearest" is unreadable, so the skipped rungs are run."""
-    capped = [halal_place(i) for i in range(overpass.MAX_ELEMENTS)]
-    _, searched, calls = ladder_run(
-        {
-            2000: [],
-            5000: [halal_place(i) for i in range(3)],
-            10_000: [],
-            25_000: capped,
-        }
-    )
-    assert calls == [2000, 25_000, 5000]
     assert searched == 5000
 
 
-def test_ladder_stops_when_the_time_budget_is_spent():
-    """Four rungs x one timeout each would otherwise outlive the function limit."""
+def test_slow_narrow_rungs_cannot_starve_the_widest():
+    """The widest rung settles "there is none within 25km" -- it is reserved.
+
+    Budgeting rung-by-rung let three slow-but-successful narrow rungs eat the
+    decisive one, turning a real "no matches" into a reported outage.
+    """
     elapsed = 0.0
 
     def spend(_radius):
-        # Each rung burns most of the budget, so the third cannot start.
+        nonlocal elapsed
+        elapsed += 11.0  # slow, but every rung succeeds
+
+    clock = mock.Mock(monotonic=lambda: elapsed)
+    with mock.patch.object(discovery, "time", clock):
+        _, searched, calls = ladder_run(
+            {2000: [], 5000: [], 10_000: [], 25_000: []}, on_rung=spend
+        )
+    assert calls[-1] == 25_000, f"widest rung was starved; ran {calls}"
+    assert searched == 25_000
+
+
+def test_ladder_stops_when_the_time_budget_is_spent():
+    """The ladder must not outlive the 60s function limit."""
+    elapsed = 0.0
+
+    def spend(_radius):
+        # One rung eats most of the budget on its own.
         nonlocal elapsed
         elapsed += discovery.SEARCH_BUDGET_S * 0.6
 
@@ -509,8 +514,10 @@ def test_ladder_stops_when_the_time_budget_is_spent():
             {2000: [halal_place(2)], 5000: [halal_place(1)], 10_000: [], 25_000: []},
             on_rung=spend,
         )
-    assert calls == [2000, 5000]
-    assert [p.osmId for p in places] == [1]
+    # Nothing affordable remains: the intermediate rungs are skipped to protect
+    # the widest, and the widest does not fit either, so the ladder stops.
+    assert calls == [2000]
+    assert [p.osmId for p in places] == [2]
 
 
 # --- Overpass mirror racing ----------------------------------------------
