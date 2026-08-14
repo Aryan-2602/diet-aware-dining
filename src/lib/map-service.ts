@@ -27,7 +27,7 @@ export interface MapData {
   };
 }
 
-export class MapGenerationAgent {
+export class MapService {
   async process(
     restaurants: Restaurant[],
     _intent: ParsedIntent,

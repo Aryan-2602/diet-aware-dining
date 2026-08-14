@@ -13,7 +13,7 @@ export interface ExportResult {
   filename: string;
 }
 
-export class ExportAgent {
+export class ExportService {
   async process(
     recommendations: Recommendation[],
     format: ExportFormat = "json"

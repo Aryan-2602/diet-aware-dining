@@ -3,8 +3,8 @@ import { DietaryIntentAgent } from "./dietary-intent-agent";
 import { ClarificationAgent } from "./clarification-agent";
 import { RestaurantDiscoveryAgent } from "./restaurant-discovery-agent";
 import { EvidenceVerificationAgent } from "./evidence-verification-agent";
-import { MapGenerationAgent, MapData } from "./map-generation-agent";
-import { ExportAgent, ExportResult, ExportFormat } from "./export-agent";
+import { MapService, MapData } from "@/lib/map-service";
+import { ExportService, ExportResult, ExportFormat } from "@/lib/export-service";
 import { RecommendationAgent } from "./recommendation-agent";
 import { scoreRestaurants } from "@/lib/confidence-scorer";
 import { DiscoveryError } from "@/lib/errors";
@@ -23,20 +23,22 @@ export interface PipelineMeta {
 
 /**
  * Agent Pipeline Orchestrator
- * Coordinates the full workflow from user request to recommendations,
- * following the exact flow defined in the Trojans board:
  *
- * Start → Mobile UI → Dietary Intent Agent → [Clarification?] →
- * Restaurant Discovery → Evidence Verification → Trust & Confidence →
- * [Too few results? → Relax constraints] → Recommendation → End
+ * Dietary Intent → [Clarification?] → Restaurant Discovery →
+ * (Evidence ‖ Confidence scoring) → Map → Recommendation → Export
+ *
+ * Four of these are LLM agents that reason about the request; the rest are
+ * deterministic services, named as such. Discovery relaxes its own radius
+ * internally, so there is no separate "too few results" stage — the previous
+ * version diagrammed one and implemented it as an empty `if` block.
  */
 export class AgentPipeline {
   private dietaryIntentAgent = new DietaryIntentAgent();
   private clarificationAgent = new ClarificationAgent();
   private discoveryAgent = new RestaurantDiscoveryAgent();
   private evidenceAgent = new EvidenceVerificationAgent();
-  private mapAgent = new MapGenerationAgent();
-  private exportAgent = new ExportAgent();
+  private mapService = new MapService();
+  private exportService = new ExportService();
   private recommendationAgent = new RecommendationAgent();
 
   private state: PipelineState = {
@@ -208,7 +210,7 @@ export class AgentPipeline {
     // Step 6: Map Generation
     this.updateState({ currentAgent: "map_generation" });
     const confidenceMap = new Map(scores.map((s) => [s.restaurantId, s.overall]));
-    const mapData = await this.mapAgent.process(restaurants, intent, confidenceMap);
+    const mapData = await this.mapService.process(restaurants, intent, confidenceMap);
     this.updateState({ mapData });
 
     // Step 7: Generate Recommendations
@@ -224,7 +226,7 @@ export class AgentPipeline {
 
     // Step 8: Export
     this.updateState({ currentAgent: "export" });
-    const exportResult = await this.exportAgent.process(recommendations, "json");
+    const exportResult = await this.exportService.process(recommendations, "json");
     this.updateState({
       recommendations,
       exportResult,
@@ -239,7 +241,7 @@ export class AgentPipeline {
    * Export recommendations in a specific format
    */
   async export(format: ExportFormat): Promise<ExportResult> {
-    return this.exportAgent.process(this.state.recommendations, format);
+    return this.exportService.process(this.state.recommendations, format);
   }
 
   /**
