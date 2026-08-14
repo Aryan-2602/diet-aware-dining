@@ -13,27 +13,34 @@ interface SearchFormProps {
   isLoading: boolean;
 }
 
+// Every value here must be a key of DIETARY_KEYWORDS in dietary-intent-agent.ts,
+// and every one of these maps to a diet:* tag we can actually filter on in
+// OpenStreetMap. Chips for things OSM cannot express (high-protein, jain,
+// open-now, cuisine families) would render back to the user as an "active
+// filter" that filtered nothing.
 const QUICK_FILTERS = [
   { label: "🥬 Vegan", value: "vegan" },
-  { label: "☪️ Halal", value: "halal" },
+  { label: "🥗 Vegetarian", value: "vegetarian" },
   { label: "🚫 Gluten-Free", value: "gluten-free" },
-  { label: "🥜 Nut-Free", value: "nut-free" },
-  { label: "💪 High-Protein", value: "high-protein" },
-  { label: "🍜 Asian Cuisine", value: "asian" },
-  { label: "🙏 Jain-Friendly", value: "jain" },
-  { label: "🕐 Open Now", value: "open-now" },
+  { label: "🥛 Dairy-Free", value: "dairy-free" },
+  { label: "☪️ Halal", value: "halal" },
+  { label: "✡️ Kosher", value: "kosher" },
 ];
 
+// Each prompt names a city. Without one, geocoding has nothing to resolve and
+// the search dead-ends before it reaches Overpass.
 const EXAMPLE_PROMPTS = [
-  "Vegan sushi spot with high-protein options near Downtown",
-  "Late-night halal burgers, gluten-free buns available",
-  "Jain-friendly Indian restaurant open on Sundays",
+  "Vegan sushi in Seattle",
+  "Halal burgers with gluten-free buns in Santa Monica",
+  "Vegetarian Indian restaurants near Downtown Los Angeles",
 ];
 
 export function SearchForm({ onSubmit, isLoading }: SearchFormProps) {
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("");
   const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
+  const [allergies, setAllergies] = useState<string[]>([]);
+  const [allergyDraft, setAllergyDraft] = useState("");
 
   const toggleFilter = (value: string) => {
     setSelectedFilters((prev) =>
@@ -43,14 +50,28 @@ export function SearchForm({ onSubmit, isLoading }: SearchFormProps) {
     );
   };
 
+  const addAllergy = () => {
+    const value = allergyDraft.trim().toLowerCase();
+    if (!value || allergies.includes(value)) {
+      setAllergyDraft("");
+      return;
+    }
+    setAllergies((prev) => [...prev, value]);
+    setAllergyDraft("");
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
+    // Fold any half-typed allergy in rather than silently dropping it.
+    const draft = allergyDraft.trim().toLowerCase();
+    const finalAllergies =
+      draft && !allergies.includes(draft) ? [...allergies, draft] : allergies;
     onSubmit({
       query,
       location,
       dietaryPreferences: selectedFilters,
-      allergies: [],
+      allergies: finalAllergies,
       cuisinePreferences: [],
     });
   };
@@ -140,6 +161,54 @@ export function SearchForm({ onSubmit, isLoading }: SearchFormProps) {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Allergies */}
+      <div>
+        <p className="text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wide">
+          Allergies
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          {allergies.map((allergy) => (
+            <span
+              key={allergy}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200"
+            >
+              {allergy}
+              <button
+                type="button"
+                onClick={() =>
+                  setAllergies((prev) => prev.filter((a) => a !== allergy))
+                }
+                className="text-red-400 hover:text-red-700"
+                aria-label={`Remove ${allergy}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <input
+            type="text"
+            value={allergyDraft}
+            onChange={(e) => setAllergyDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === ",") {
+                e.preventDefault();
+                addAllergy();
+              }
+            }}
+            onBlur={addAllergy}
+            placeholder="e.g. peanuts — press Enter"
+            className="px-3 py-1.5 border border-gray-200 rounded-full text-xs bg-white shadow-sm outline-none focus:ring-2 focus:ring-primary-500 min-w-[12rem]"
+          />
+        </div>
+        {allergies.length > 0 && (
+          <p className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            ⚠️ OpenStreetMap has no allergen or cross-contamination data, so we
+            cannot verify allergy safety. We use this only to surface contact
+            details so you can call ahead — always tell staff directly.
+          </p>
+        )}
       </div>
 
       {/* Example Prompts */}

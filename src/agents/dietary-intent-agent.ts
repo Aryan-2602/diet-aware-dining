@@ -8,6 +8,7 @@ import {
 /** Raw, untrusted shape returned by the LLM before validation. */
 interface LLMExtractedIntent {
   dietaryNeeds?: unknown;
+  allergies?: unknown;
   location?: unknown;
   cuisineType?: unknown;
   mealType?: unknown;
@@ -65,6 +66,21 @@ export class DietaryIntentAgent {
     "snack",
   ];
 
+  /**
+   * Caller-supplied preferences are untrusted input, exactly like LLM output:
+   * the UI, the API route, and the clarification flow can all put arbitrary
+   * strings here. Anything outside the controlled vocabulary would survive all
+   * the way to the dietary filter, match no OSM tag, and silently zero out
+   * every result.
+   */
+  private sanitizePreferences(preferences: string[]): string[] {
+    const vocabulary = Object.keys(this.DIETARY_KEYWORDS);
+    return preferences
+      .filter((p): p is string => typeof p === "string")
+      .map((p) => p.trim().toLowerCase())
+      .filter((p) => vocabulary.includes(p));
+  }
+
   async process(request: DietaryRequest): Promise<ParsedIntent> {
     try {
       return await this.processWithLLM(request);
@@ -91,6 +107,7 @@ export class DietaryIntentAgent {
       "The object must have exactly this shape:",
       "{",
       '  "dietaryNeeds": string[],',
+      '  "allergies": string[],',
       '  "location": string,',
       '  "cuisineType": string|null,',
       '  "mealType": string|null,',
@@ -103,6 +120,11 @@ export class DietaryIntentAgent {
       'Infer them from phrasing rather than exact wording — "can\'t have gluten" is "gluten-free",',
       '"no animal products" is "vegan", "lactose intolerant" is "dairy-free".',
       "Never invent a category outside the list. Use [] when none apply.",
+      "",
+      '"allergies" is free text — list any allergen the diner says they must avoid',
+      '(e.g. "allergic to peanuts" -> ["peanuts"]). This is separate from a dietary',
+      "preference: an allergy is something that would harm them, not something they",
+      "choose. Use [] when none are mentioned.",
       "",
       `"cuisineType" must be exactly one of ${JSON.stringify(
         this.CUISINE_KEYWORDS
@@ -139,11 +161,27 @@ export class DietaryIntentAgent {
 
     // Every field below is validated before use — the model's output is not
     // trusted to stay inside the controlled vocabularies.
-    const needs = new Set<string>(request.dietaryPreferences);
+    const needs = new Set<string>(
+      this.sanitizePreferences(request.dietaryPreferences)
+    );
     if (Array.isArray(parsed.dietaryNeeds)) {
       for (const need of parsed.dietaryNeeds) {
         if (typeof need === "string" && vocabulary.includes(need)) {
           needs.add(need);
+        }
+      }
+    }
+
+    // Allergies are free text — there is no controlled vocabulary, because OSM
+    // has no allergen data to match them against. They are never used to
+    // filter; they drive warnings and the call-ahead affordance only.
+    const allergies = new Set<string>(
+      request.allergies.map((a) => a.trim().toLowerCase()).filter(Boolean)
+    );
+    if (Array.isArray(parsed.allergies)) {
+      for (const allergy of parsed.allergies) {
+        if (typeof allergy === "string" && allergy.trim()) {
+          allergies.add(allergy.trim().toLowerCase());
         }
       }
     }
@@ -175,7 +213,7 @@ export class DietaryIntentAgent {
 
     return {
       dietaryNeeds: Array.from(needs),
-      restrictions: this.extractRestrictions(request),
+      restrictions: Array.from(allergies),
       location,
       // Ambiguity stays deterministic — the LLM is not asked to judge it.
       isLocationAmbiguous: this.isLocationAmbiguous(location),
@@ -212,7 +250,9 @@ export class DietaryIntentAgent {
     query: string,
     request: DietaryRequest
   ): string[] {
-    const needs = new Set<string>(request.dietaryPreferences);
+    const needs = new Set<string>(
+      this.sanitizePreferences(request.dietaryPreferences)
+    );
 
     for (const [need, keywords] of Object.entries(this.DIETARY_KEYWORDS)) {
       if (keywords.some((kw) => query.includes(kw))) {
@@ -224,7 +264,16 @@ export class DietaryIntentAgent {
   }
 
   private extractRestrictions(request: DietaryRequest): string[] {
-    return [...request.allergies];
+    // Normalized identically to the LLM path, so downstream warnings and the
+    // call-ahead affordance behave the same with or without an API key.
+    return Array.from(
+      new Set(
+        request.allergies
+          .filter((a): a is string => typeof a === "string")
+          .map((a) => a.trim().toLowerCase())
+          .filter(Boolean)
+      )
+    );
   }
 
   private extractLocationRuleBased(
@@ -238,10 +287,18 @@ export class DietaryIntentAgent {
       };
     }
 
-    // Try to extract location from query
+    // Try to extract location from query.
+    //
+    // The leading \b matters: without it, "within 5 miles of Seattle" matches
+    // the "in" inside "within" and yields the location "5 miles of seattle",
+    // which geocodes to nothing. The distance form is tried first so it wins
+    // over the bare preposition.
+    //
+    // Trailing [,.] matters too: without it, "in Santa Monica, gluten-free buns
+    // available" yields "santa monica, gluten-free buns available".
     const locationPatterns = [
-      /(?:in|near|around|close to)\s+(.+?)(?:\s+that|\s+with|\s+for|$)/i,
-      /(?:restaurants?\s+in)\s+(.+?)(?:\s+that|\s+with|\s+for|$)/i,
+      /\bwithin\s+[\d.]+\s*(?:mi|miles?|km|kilometers?|blocks?)\s+of\s+(.+?)(?:\s+that\b|\s+with\b|\s+for\b|\s+open\b|[,.;]|$)/i,
+      /\b(?:in|near|around|nearby|close to)\s+(.+?)(?:\s+that\b|\s+with\b|\s+for\b|\s+open\b|[,.;]|$)/i,
     ];
 
     for (const pattern of locationPatterns) {
