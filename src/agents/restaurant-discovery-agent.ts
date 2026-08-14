@@ -151,7 +151,12 @@ export class RestaurantDiscoveryAgent {
         const aCuisine = cuisineMatches(a.cuisine, intent.cuisineType) ? 0 : 1;
         const bCuisine = cuisineMatches(b.cuisine, intent.cuisineType) ? 0 : 1;
         if (aCuisine !== bCuisine) return aCuisine - bCuisine;
-        return (a.distance ?? Infinity) - (b.distance ?? Infinity);
+        const byDistance =
+          (a.distance ?? Infinity) - (b.distance ?? Infinity);
+        if (byDistance !== 0) return byDistance;
+        // Distances are whole metres, so exact ties happen. Without a final
+        // tie-break their order is whatever Overpass happened to return.
+        return a.id.localeCompare(b.id);
       });
   }
 

@@ -138,21 +138,64 @@ src/
 
 ## 🔄 Agent Pipeline Flow
 
-1. **DietaryIntentAgent** — Extracts dietary needs, allergies, cuisine, location, price range, and meal type from natural language using an LLM call (OpenAI Chat Completions), constrained to a controlled vocabulary and validated field-by-field before use. Requires `OPENAI_API_KEY` (see `.env.example`); if the key is missing or the API call fails, it falls back to a deterministic keyword/regex parser so the request still completes.
+Four stages reason with an LLM; the rest are deterministic services. The split
+is deliberate — **the model decides strategy, code enforces dietary safety.**
+Anything that changes *which* restaurants a person sees is reproducible.
 
-2. **ClarificationAgent** — If the location is missing or vague (e.g., "near me"), generates follow-up questions for the user.
+1. **DietaryIntentAgent** *(LLM)* — Extracts dietary needs, allergies, cuisine
+   and location from natural language, constrained to a controlled vocabulary
+   and validated field by field. Falls back to a keyword/regex parser when
+   `OPENAI_API_KEY` is absent, so the app works without one.
 
-3. **RestaurantDiscoveryAgent** — Geocodes the location via Nominatim, then queries the Overpass API for restaurants/cafes within a radius. Implements constraint relaxation (expanding radius from 2km → 4km → 6km) if too few results.
+2. **ClarificationAgent** *(LLM)* — Asks about genuinely blocking gaps — a
+   missing or ambiguous location, no stated dietary requirement — in wording
+   that reflects the actual query. Options are re-derived from the vocabulary,
+   never taken from the model.
 
-4. **EvidenceVerificationAgent** — Checks each restaurant's dietary claims against OSM tags (`diet:vegan`, `diet:halal`, etc.) and scores data completeness.
+3. **RestaurantDiscovery** — Geocodes once via Nominatim, then queries Overpass
+   with the dietary requirement **in the query**: `nwr` across
+   restaurant/cafe/fast_food, filtered on `diet:*` ~ `^(yes|only)$`. Widens
+   2 → 5 → 10 → 25 km until there are enough matches. Cuisine is a soft
+   preference applied to ranking, because 22% of places carry no `cuisine` tag.
 
-5. **TrustConfidenceAgent** — Computes an overall confidence score per restaurant based on evidence strength, review count proxy, menu verification, and data recency.
+4. **EvidenceVerification** — Emits one item per requested need, quoting the
+   OSM tag verbatim. Whether a tag exists is a fact; whether it is still true is
+   a belief derived from its `check_date`. Needs OSM cannot express, and every
+   allergy, produce explicit "cannot be verified" evidence.
 
-6. **MapGenerationAgent** — Calculates map center, bounds, zoom level, and generates marker data with Google Maps URLs.
+5. **Confidence scoring** *(deterministic)* — Diet tag strength (`only` > `yes`),
+   `check_date` recency, how much of the request OSM can express, and listing
+   completeness. No random component; the same input always scores the same.
 
-7. **RecommendationAgent** — Compiles final ranked list with match reasons and warnings.
+6. **MapService** — Map centre, bounds, zoom and marker data.
 
-8. **ExportAgent** — Formats results into JSON, plain text, or CSV for sharing/export.
+7. **RecommendationAgent** *(LLM)* — Writes match reasons and warnings over the
+   already-filtered, already-scored set. Ranking stays a deterministic sort, and
+   safety warnings are generated in code and merged, never left to the model.
+
+8. **ExportService** — JSON, plain text or CSV.
+
+### What this app will not tell you
+
+- **It never shows a restaurant it cannot verify.** A missing `diet:*` tag is
+  treated as "unknown", not "probably fine". Three verified results beat twenty
+  guesses.
+- **It cannot verify allergies at all.** OpenStreetMap has no allergen or
+  cross-contamination data, so allergies are never used to filter — they surface
+  a standing warning and prioritise places with a phone number you can call.
+- **`keto`, `paleo` and `nut-free` have no OSM tag.** They are reported as
+  unenforceable rather than silently dropped.
+- **There are no ratings, reviews or prices.** OSM has none, so none are shown.
+
+### Verification
+
+```bash
+npm run test:tools   # 35 assertions over the pure safety functions, offline
+npm run eval         # end-to-end against the real Nominatim/Overpass APIs
+```
+
+The eval reports upstream outages as `SKIP` — Overpass allows 2 slots per IP and
+is regularly saturated, so a network failure is never mistaken for a regression.
 
 ---
 
