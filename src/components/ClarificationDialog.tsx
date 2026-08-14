@@ -11,12 +11,15 @@ import { ClarificationQuestion } from "@/types";
 interface ClarificationDialogProps {
   questions: ClarificationQuestion[];
   onSubmit: (answers: Record<string, string>) => void;
+  /** Abandon the clarification and return to the search form. */
+  onCancel?: () => void;
 }
 
 /** Follow-up form; submit sends `{ [field]: answer }` to the parent. */
 export function ClarificationDialog({
   questions,
   onSubmit,
+  onCancel,
 }: ClarificationDialogProps) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
@@ -92,13 +95,30 @@ export function ClarificationDialog({
             </div>
           ))}
 
-          <button
-            type="submit"
-            disabled={Object.keys(answers).length === 0}
-            className="w-full py-3 px-6 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 text-white font-semibold rounded-xl transition-colors"
-          >
-            Continue Search
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="submit"
+              // Every question must be answered. Submitting a partial set sends
+              // the search back unchanged, which is how users ended up looping
+              // through the same question.
+              disabled={questions.some((q) => !answers[q.field]?.trim())}
+              className="flex-1 py-3 px-6 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 text-white font-semibold rounded-xl transition-colors"
+            >
+              Continue Search
+            </button>
+            {onCancel && (
+              // The only way out used to be answering — and the answer could be
+              // another question. Navigating away and back re-opened the dialog,
+              // because the processing state was never reset.
+              <button
+                type="button"
+                onClick={onCancel}
+                className="py-3 px-6 text-gray-600 hover:text-gray-900 font-medium rounded-xl hover:bg-gray-100 transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
         </form>
       </div>
     </div>

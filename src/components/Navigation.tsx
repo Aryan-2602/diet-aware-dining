@@ -15,7 +15,6 @@ export function Navigation() {
     { page: "landing" as const, label: "Home", icon: "🏠" },
     { page: "search" as const, label: "Search", icon: "🔍" },
     { page: "results" as const, label: "Results", icon: "📍" },
-    { page: "evidence" as const, label: "Evidence", icon: "🛡️" },
     { page: "saved" as const, label: "Saved", icon: "💾" },
   ];
 

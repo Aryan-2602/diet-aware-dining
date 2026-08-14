@@ -6,6 +6,7 @@
  * filtered on would look "active" while changing nothing.
  */
 import { useState } from "react";
+import { EXAMPLE_PROMPTS, SEARCH_PLACEHOLDER } from "@/lib/prompts";
 
 interface SearchFormProps {
   onSubmit: (data: {
@@ -16,6 +17,16 @@ interface SearchFormProps {
     cuisinePreferences: string[];
   }) => void;
   isLoading: boolean;
+  /**
+   * Seeds the form. Used by the landing-page example prompts and by "Rerun" in
+   * Saved — both of which previously navigated here and dropped the query they
+   * were displaying, landing the user on a blank textarea.
+   */
+  initial?: {
+    query?: string;
+    location?: string;
+    dietaryPreferences?: string[];
+  };
 }
 
 // Every value here must be a key of DIETARY_KEYWORDS in dietary-intent-agent.ts,
@@ -32,19 +43,14 @@ const QUICK_FILTERS = [
   { label: "✡️ Kosher", value: "kosher" },
 ];
 
-// Each prompt names a city. Without one, geocoding has nothing to resolve and
-// the search dead-ends before it reaches Overpass.
-const EXAMPLE_PROMPTS = [
-  "Vegan sushi in Seattle",
-  "Halal burgers with gluten-free buns in Santa Monica",
-  "Vegetarian Indian restaurants near Downtown Los Angeles",
-];
 
 /** Collects query, location, OSM-mappable diet chips, and allergy labels. */
-export function SearchForm({ onSubmit, isLoading }: SearchFormProps) {
-  const [query, setQuery] = useState("");
-  const [location, setLocation] = useState("");
-  const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
+export function SearchForm({ onSubmit, isLoading, initial }: SearchFormProps) {
+  const [query, setQuery] = useState(initial?.query ?? "");
+  const [location, setLocation] = useState(initial?.location ?? "");
+  const [selectedFilters, setSelectedFilters] = useState<string[]>(
+    initial?.dietaryPreferences ?? []
+  );
   const [allergies, setAllergies] = useState<string[]>([]);
   const [allergyDraft, setAllergyDraft] = useState("");
 
@@ -94,7 +100,7 @@ export function SearchForm({ onSubmit, isLoading }: SearchFormProps) {
           <textarea
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={"e.g. \"Halal Thai food that's also nut-free, open after 9 PM near me\""}
+            placeholder={SEARCH_PLACEHOLDER}
             className="w-full px-5 py-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none text-sm resize-none h-28 bg-white shadow-sm"
             required
           />

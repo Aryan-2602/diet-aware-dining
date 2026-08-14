@@ -33,6 +33,29 @@ export function ResultsMapView() {
     const needs = searchMeta?.enforceableNeeds ?? [];
     const km = searchMeta ? Math.round(searchMeta.radiusSearchedM / 1000) : null;
 
+    // No search has run at all -- distinct from a search that found nothing.
+    // The old copy claimed a search had failed when none was ever made.
+    if (!searchMeta) {
+      return (
+        <div className="max-w-xl mx-auto text-center py-16">
+          <div className="text-6xl mb-4">🔍</div>
+          <h2 className="text-xl font-bold text-gray-800 mb-3">
+            No search yet
+          </h2>
+          <p className="text-gray-600 mb-6">
+            Describe what you need and we&apos;ll find restaurants whose dietary
+            tags we can actually verify.
+          </p>
+          <button
+            onClick={() => setPage("search")}
+            className="px-6 py-2.5 bg-primary-500 hover:bg-primary-600 text-white font-semibold rounded-full transition-colors"
+          >
+            Start a search
+          </button>
+        </div>
+      );
+    }
+
     return (
       <div className="max-w-xl mx-auto text-center py-16">
         <div className="text-6xl mb-4">🔍</div>
@@ -235,7 +258,7 @@ function sortResults(recs: Recommendation[], mode: SortMode): Recommendation[] {
     case "confidence":
       return sorted.sort((a, b) => b.confidence.overall - a.confidence.overall);
     case "distance":
-      return sorted.sort((a, b) => (a.restaurant.distance ?? 9999) - (b.restaurant.distance ?? 9999));
+      return sorted.sort((a, b) => (a.restaurant.distance ?? Infinity) - (b.restaurant.distance ?? Infinity));
     default:
       return sorted;
   }

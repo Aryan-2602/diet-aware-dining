@@ -17,7 +17,6 @@ import { ClarificationDialog } from "@/components/ClarificationDialog";
 import { InterpretationView } from "@/components/InterpretationView";
 import { ResultsMapView } from "@/components/ResultsMapView";
 import { RestaurantDetails } from "@/components/RestaurantDetails";
-import { EvidenceView } from "@/components/EvidenceView";
 import { SavedRecentView } from "@/components/SavedRecentView";
 import { Navigation } from "@/components/Navigation";
 import {
@@ -40,6 +39,9 @@ type ProcessingState =
 export default function Home() {
   const currentPage = useAppStore((s) => s.currentPage);
   const setPage = useAppStore((s) => s.setPage);
+  const searchSeed = useAppStore((s) => s.searchSeed);
+  const setSearchSeed = useAppStore((s) => s.setSearchSeed);
+  const clearResults = useAppStore((s) => s.clearResults);
   const setResults = useAppStore((s) => s.setResults);
   const addRecentSearch = useAppStore((s) => s.addRecentSearch);
 
@@ -63,6 +65,7 @@ export default function Home() {
     cuisinePreferences: string[];
   }) => {
     setIsLoading(true);
+    setSearchSeed(null);
     setPage("interpretation");
     setProcessingState({ phase: "processing", currentAgent: "dietary_intent" });
 
@@ -131,6 +134,7 @@ export default function Home() {
         setProcessingState({ phase: "idle" });
         setPage("results");
       } else {
+        clearResults();
         setProcessingState({
           phase: "error",
           message: result.message || "Something went wrong",
@@ -140,6 +144,7 @@ export default function Home() {
         setPage("search");
       }
     } catch {
+      clearResults();
       setProcessingState({
         phase: "error",
         message: "Failed to connect to the server",
@@ -187,6 +192,7 @@ export default function Home() {
       }
 
       if (result.status === "error") {
+        clearResults();
         setProcessingState({
           phase: "error",
           message: result.message || "Something went wrong",
@@ -221,6 +227,7 @@ export default function Home() {
       setProcessingState({ phase: "idle" });
       setPage("results");
     } catch {
+      clearResults();
       setProcessingState({
         phase: "error",
         message: "Failed to process clarification",
@@ -244,15 +251,8 @@ export default function Home() {
             <NavLink active={currentPage === "landing"} onClick={() => setPage("landing")}>Home</NavLink>
             <NavLink active={currentPage === "search"} onClick={() => setPage("search")}>Search</NavLink>
             <NavLink active={currentPage === "results"} onClick={() => setPage("results")}>Results</NavLink>
-            <NavLink active={currentPage === "evidence"} onClick={() => setPage("evidence")}>Evidence</NavLink>
             <NavLink active={currentPage === "saved"} onClick={() => setPage("saved")}>Saved</NavLink>
           </nav>
-          <button
-            onClick={() => setPage("search")}
-            className="px-5 py-2 bg-primary-500 hover:bg-primary-600 text-white text-sm font-semibold rounded-full transition-colors"
-          >
-            Search Now
-          </button>
         </div>
       </header>
 
@@ -275,9 +275,18 @@ export default function Home() {
               <ClarificationDialog
                 questions={processingState.questions}
                 onSubmit={handleClarification}
+                // Without this the dialog was inescapable: it replaces the
+                // search form, and the processing state was never reset, so
+                // navigating away and back brought it straight back.
+                onCancel={() => setProcessingState({ phase: "idle" })}
               />
             ) : (
-              <SearchForm onSubmit={handleSearch} isLoading={isLoading} />
+              <SearchForm
+                key={searchSeed?.query ?? "blank"}
+                onSubmit={handleSearch}
+                isLoading={isLoading}
+                initial={searchSeed ?? undefined}
+              />
             )}
 
             {processingState.phase === "error" && (
@@ -289,15 +298,26 @@ export default function Home() {
         )}
 
         {currentPage === "interpretation" &&
-          processingState.phase === "processing" && (
+          (processingState.phase === "processing" ? (
             <InterpretationView currentAgent={processingState.currentAgent} />
-          )}
+          ) : (
+            // Without this branch, any state where the page is "interpretation"
+            // but processing has ended renders an empty <main> between the
+            // header and footer. Today React batching usually hides it.
+            <div className="text-center py-20">
+              <p className="text-gray-500 mb-4">Nothing is running right now.</p>
+              <button
+                onClick={() => setPage("search")}
+                className="px-6 py-2.5 text-primary-600 font-semibold hover:bg-primary-50 rounded-full transition-colors border border-primary-200"
+              >
+                Start a search
+              </button>
+            </div>
+          ))}
 
         {currentPage === "results" && <ResultsMapView />}
 
         {currentPage === "details" && <RestaurantDetails />}
-
-        {currentPage === "evidence" && <EvidenceView />}
 
         {currentPage === "saved" && <SavedRecentView />}
       </main>
@@ -305,7 +325,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="bg-gray-900 text-gray-400 mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-primary-500">📍</span>
@@ -314,16 +334,6 @@ export default function Home() {
               <p className="text-sm">
                 Discover restaurants that match your complex dietary needs — powered by AI, navigated with Google Maps.
               </p>
-            </div>
-            <div>
-              <h4 className="text-sm font-semibold text-gray-200 mb-3">Navigation</h4>
-              <div className="space-y-2 text-sm">
-                <button onClick={() => setPage("landing")} className="block hover:text-white transition-colors">Home</button>
-                <button onClick={() => setPage("search")} className="block hover:text-white transition-colors">Search</button>
-                <button onClick={() => setPage("results")} className="block hover:text-white transition-colors">Results Map</button>
-                <button onClick={() => setPage("evidence")} className="block hover:text-white transition-colors">Evidence & Trust</button>
-                <button onClick={() => setPage("saved")} className="block hover:text-white transition-colors">Saved & Recent</button>
-              </div>
             </div>
             <div>
               <h4 className="text-sm font-semibold text-gray-200 mb-3">Data Sources</h4>

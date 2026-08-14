@@ -5,10 +5,18 @@
  * still the same Next.js route.
  */
 import { useAppStore } from "@/store";
+import { EXAMPLE_PROMPTS } from "@/lib/prompts";
 
 /** Hero, how-it-works, and trust sections; navigates via `setPage`. */
 export function LandingPage() {
   const setPage = useAppStore((s) => s.setPage);
+  const setSearchSeed = useAppStore((s) => s.setSearchSeed);
+
+  /** Carries the prompt into the form instead of discarding it. */
+  const startSearchWith = (query: string) => {
+    setSearchSeed({ query });
+    setPage("search");
+  };
 
   return (
     <div className="space-y-16">
@@ -73,14 +81,10 @@ export function LandingPage() {
           Try natural language requests
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {[
-            "Halal food with gluten-free options near USC",
-            "Vegan restaurants with high-protein meals",
-            "Nut-free dessert places within 5 miles",
-          ].map((example) => (
+          {EXAMPLE_PROMPTS.map((example) => (
             <button
               key={example}
-              onClick={() => setPage("search")}
+              onClick={() => startSearchWith(example)}
               className="text-left px-5 py-4 bg-primary-50 border border-primary-200 rounded-xl text-sm text-gray-700 hover:bg-primary-100 hover:border-primary-300 transition-colors"
             >
               {`"${example}"`}

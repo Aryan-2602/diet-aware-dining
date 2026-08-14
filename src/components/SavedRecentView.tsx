@@ -11,6 +11,7 @@ export function SavedRecentView() {
   const recentSearches = useAppStore((s) => s.recentSearches);
   const savedRestaurants = useAppStore((s) => s.savedRestaurants);
   const setPage = useAppStore((s) => s.setPage);
+  const setSearchSeed = useAppStore((s) => s.setSearchSeed);
   const setSelectedRestaurant = useAppStore((s) => s.setSelectedRestaurant);
   const unsaveRestaurant = useAppStore((s) => s.unsaveRestaurant);
   const clearRecentSearches = useAppStore((s) => s.clearRecentSearches);
@@ -72,7 +73,16 @@ export function SavedRecentView() {
                   </p>
                 </div>
                 <button
-                  onClick={() => setPage("search")}
+                  onClick={() => {
+                    // Previously this just navigated to an empty form, even
+                    // though the stored search carries all three fields.
+                    setSearchSeed({
+                      query: search.query,
+                      location: search.location,
+                      dietaryPreferences: search.dietaryPreferences,
+                    });
+                    setPage("search");
+                  }}
                   className="text-xs text-primary-600 hover:text-primary-700 font-medium px-3 py-1 rounded-lg hover:bg-primary-50"
                 >
                   Rerun

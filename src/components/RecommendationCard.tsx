@@ -21,7 +21,11 @@ export function RecommendationCard({
   const { restaurant, confidence, evidence, matchReasons, warnings } =
     recommendation;
   const setSelectedRestaurant = useAppStore((s) => s.setSelectedRestaurant);
+  const saveRestaurant = useAppStore((s) => s.saveRestaurant);
+  const unsaveRestaurant = useAppStore((s) => s.unsaveRestaurant);
+  const savedRestaurants = useAppStore((s) => s.savedRestaurants);
   const setPage = useAppStore((s) => s.setPage);
+  const isSaved = savedRestaurants.some((s) => s.id === restaurant.id);
 
   const confidencePercent = Math.round(confidence.overall * 100);
   const confidenceColor =
@@ -31,9 +35,11 @@ export function RecommendationCard({
       ? "bg-amber-500 text-white"
       : "bg-gray-400 text-white";
 
-  const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-    restaurant.name + " " + restaurant.address
-  )}`;
+  // Coordinates, not a name+address text search: the latter can open a
+  // different restaurant with a common name. Matches details and saved.
+  const googleMapsUrl =
+    `https://www.google.com/maps/dir/?api=1&destination=` +
+    `${restaurant.location.lat},${restaurant.location.lng}`;
 
   // Only ever a real, verified claim. When there is none, nothing is shown —
   // the previous fallback fabricated a quotation and styled it as sourced.
@@ -112,13 +118,18 @@ export function RecommendationCard({
       <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => {
-              setSelectedRestaurant(recommendation);
-              setPage("evidence");
-            }}
-            className="text-sm font-semibold text-primary-500 hover:text-primary-600 transition-colors"
+            onClick={() =>
+              isSaved
+                ? unsaveRestaurant(restaurant.id)
+                : saveRestaurant(recommendation)
+            }
+            className={`text-sm font-semibold transition-colors ${
+              isSaved
+                ? "text-primary-600"
+                : "text-gray-500 hover:text-gray-700"
+            }`}
           >
-            View Evidence
+            {isSaved ? "★ Saved" : "☆ Save"}
           </button>
           <button
             onClick={() => {
