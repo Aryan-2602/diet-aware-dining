@@ -2,7 +2,7 @@
 
 🏆 **Winning project — Miro x Kiro Hackathon LA Chapter 2026**
 
-A multi-agent AI system that discovers restaurants matching complex dietary needs using **real-time OpenStreetMap data** — no API keys required. Built with Next.js, React, and a pipeline of 7 specialized agents.
+A multi-agent AI system that discovers restaurants matching complex dietary needs using **real-time OpenStreetMap data**. Built with Next.js, React, and a pipeline of LLM agents over a deterministic safety core — it only shows restaurants whose dietary tags it can actually verify.
 
 > "Halal food with gluten-free options near USC" → Real restaurants, confidence-scored, with Google Maps directions.
 
@@ -16,12 +16,12 @@ A multi-agent AI system that discovers restaurants matching complex dietary need
 
 - **Natural Language Search** — Describe dietary needs in plain English (e.g., "vegan sushi near downtown")
 - **Real-Time Data** — Fetches live restaurant data from OpenStreetMap via Overpass API
-- **Multi-Agent Pipeline** — 7 specialized agents handle parsing, discovery, verification, scoring, and ranking
-- **Confidence Scoring** — Each result shows a transparency score based on evidence strength
+- **Multi-Agent Pipeline** — Four LLM agents (intent, clarification, evidence, recommendation) over a deterministic core that owns discovery, filtering and scoring
+- **Verified Matches Only** — Results are hard-filtered on OpenStreetMap `diet:*` tags; a missing tag counts as "unknown", never "probably fine"
 - **Source Verification** — Every result links back to its OpenStreetMap source for independent verification
 - **Google Maps Navigation** — One-click directions to any restaurant
 - **Responsive UI** — Full desktop layout with side-by-side map + results, mobile-first design
-- **No API Keys** — All external services are free and open (Nominatim, Overpass, OSM)
+- **Degrades Gracefully** — Nominatim, Overpass and OSM are free and keyless; `OPENAI_API_KEY` unlocks the LLM agents, and every one falls back to a deterministic path without it
 
 ---
 
@@ -46,10 +46,10 @@ A multi-agent AI system that discovers restaurants matching complex dietary need
 │  │  2. ClarificationAgent   → Ask if ambiguous       │ │
 │  │  3. RestaurantDiscovery   → Query Overpass API     │ │
 │  │  4. EvidenceVerification  → Verify dietary tags    │ │
-│  │  5. TrustConfidence       → Score confidence       │ │
-│  │  6. MapGeneration         → Compute map bounds     │ │
+│  │  5. ConfidenceScorer      → Deterministic scoring  │ │
+│  │  6. MapService            → Compute map bounds     │ │
 │  │  7. Recommendation        → Rank & compile         │ │
-│  │  8. Export                 → Format JSON/CSV        │ │
+│  │  8. ExportService         → Format JSON/CSV        │ │
 │  └────────────────────────────────────────────────────┘ │
 └────────────────────────────┬────────────────────────────┘
                              │
@@ -59,6 +59,7 @@ A multi-agent AI system that discovers restaurants matching complex dietary need
 │  • Overpass API — Queries OSM for restaurants           │
 │  • OpenStreetMap — 10M+ contributor database            │
 │  • Google Maps — Directions link (client-side only)     │
+│  • OpenAI — Intent, clarification, recommendation copy  │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -105,11 +106,19 @@ src/
 │   ├── dietary-intent-agent.ts      # Parses NL query → structured intent
 │   ├── clarification-agent.ts       # Asks follow-up if location ambiguous
 │   ├── restaurant-discovery-agent.ts # Queries Overpass API for real restaurants
-│   ├── evidence-verification-agent.ts # Verifies dietary claims via OSM tags
-│   ├── trust-confidence-agent.ts    # Scores confidence per restaurant
-│   ├── map-generation-agent.ts      # Generates map bounds & markers
-│   ├── recommendation-agent.ts      # Ranks results, generates match reasons
-│   └── export-agent.ts             # Exports results as JSON/CSV/text
+│   ├── evidence-verification-agent.ts # Restates OSM tags as evidence
+│   └── recommendation-agent.ts      # Ranks results, writes match reasons
+├── lib/
+│   ├── agent.ts                     # Tool-calling agent runtime
+│   ├── llm-client.ts                # Dependency-free OpenAI client
+│   ├── confidence-scorer.ts         # Deterministic scoring
+│   ├── map-service.ts               # Map bounds & markers
+│   ├── export-service.ts            # JSON/CSV/text export
+│   ├── errors.ts                    # Typed discovery failures
+│   └── tools/                       # Deterministic tools the agents call
+│       ├── diet-tags.ts             # Vocabulary → OSM tag mapping (safety core)
+│       ├── geocode.ts               # Nominatim, cached
+│       └── overpass.ts              # Overpass query builder + mirror failover
 ├── app/
 │   ├── api/
 │   │   ├── recommend/route.ts       # POST - main search endpoint
@@ -132,6 +141,11 @@ src/
 │   └── index.ts                     # Zustand store (persisted saves/recents)
 └── types/
     └── index.ts                     # TypeScript interfaces for all entities
+
+scripts/
+├── test-tools.ts                    # Offline tests for the safety functions
+└── eval.ts                          # End-to-end eval against the real APIs
+fixtures/                            # Overpass response for offline testing
 ```
 
 ---
