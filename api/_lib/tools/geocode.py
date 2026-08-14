@@ -9,12 +9,13 @@ allows one per second.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Optional
 
 import httpx
 
 from ..errors import DiscoveryError, GeocodeFailedError
+from . import cache
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 TIMEOUT_S = 5.0
@@ -43,6 +44,16 @@ async def geocode(location: str) -> GeocodeResult:
     cached = _cache.get(key)
     if cached is not None:
         return cached
+
+    # The dict above only survives within one warm instance, which on serverless
+    # is close to never. The shared cache is what actually keeps repeat searches
+    # for a city inside Nominatim's one-request-per-second policy.
+    shared_key = cache.key_for("geocode", key)
+    stored = await cache.read(shared_key)
+    if stored is not None:
+        result = GeocodeResult(**stored)
+        _cache[key] = result
+        return result
 
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
@@ -101,4 +112,7 @@ async def geocode(location: str) -> GeocodeResult:
         boundingBox=[float(v) for v in bbox] if bbox else None,
     )
     _cache[key] = result
+    # A city's coordinates are effectively immutable, so this is cached for
+    # much longer than restaurant data.
+    await cache.write(shared_key, asdict(result), ttl_s=30 * 24 * 60 * 60)
     return result

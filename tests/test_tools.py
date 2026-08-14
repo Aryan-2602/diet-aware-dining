@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import sys
 from datetime import datetime, timedelta, timezone
@@ -29,7 +30,7 @@ from api._lib.confidence_scorer import (  # noqa: E402
     score_restaurant,
 )
 from api._lib.errors import DiscoveryError  # noqa: E402
-from api._lib.tools import overpass  # noqa: E402
+from api._lib.tools import cache, overpass  # noqa: E402
 from api._lib.tools.geocode import GeocodeResult  # noqa: E402
 from api._lib.tools.diet_tags import (  # noqa: E402
     cuisine_filter,
@@ -585,6 +586,123 @@ def test_raises_only_when_every_mirror_fails():
         with pytest.raises(DiscoveryError) as caught:
             asyncio.run(overpass._fetch_with_mirrors("q", 10.0))
     assert caught.value.code == "overpass_timeout"
+
+
+# --- Result cache ---------------------------------------------------------
+#
+# The cache exists to stop asking saturated mirrors the same question. It must
+# never be able to fail a search, and must be invisible when unconfigured.
+
+
+def search_once(monkeypatch_env, fetch):
+    """Runs search_restaurants with a stubbed transport under given env."""
+    with mock.patch.dict(os.environ, monkeypatch_env, clear=False):
+        with mock.patch.object(overpass, "_fetch_with_mirrors", fetch):
+            return asyncio.run(
+                overpass.search_restaurants(
+                    lat=34.0, lng=-118.5, radius_m=2000, diet_needs=["halal"]
+                )
+            )
+
+
+NO_KV = {"KV_REST_API_URL": "", "KV_REST_API_TOKEN": ""}
+
+
+def test_cache_is_a_noop_when_unconfigured():
+    """No KV store must behave exactly as before, not fail."""
+    calls = []
+
+    async def fetch(query, timeout_s):
+        calls.append(query)
+        return {"elements": []}
+
+    with mock.patch.dict(os.environ, NO_KV, clear=False):
+        assert cache.is_enabled() is False
+    search_once(NO_KV, fetch)
+    search_once(NO_KV, fetch)
+    assert len(calls) == 2, "unconfigured cache must not short-circuit"
+
+
+def test_a_read_failure_still_serves_the_search():
+    """A cache outage must degrade to a live query, not to a failed search."""
+    calls = []
+
+    async def fetch(query, timeout_s):
+        calls.append(query)
+        return {"elements": []}
+
+    async def boom(_key):
+        raise RuntimeError("KV is down")
+
+    with mock.patch.object(cache, "get_json", boom):
+        with mock.patch.object(overpass, "_fetch_with_mirrors", fetch):
+            places = asyncio.run(
+                overpass.search_restaurants(
+                    lat=34.0, lng=-118.5, radius_m=2000, diet_needs=["halal"]
+                )
+            )
+    assert places == []
+    assert len(calls) == 1
+
+
+def test_a_hit_skips_the_mirrors_entirely():
+    async def fetch(query, timeout_s):
+        raise AssertionError("a cache hit must not reach Overpass")
+
+    element = {
+        "type": "node",
+        "id": 5,
+        "lat": 34.0,
+        "lon": -118.5,
+        "tags": {"name": "Cached Halal", "diet:halal": "yes"},
+    }
+
+    async def hit(_key):
+        return [element]
+
+    with mock.patch.object(cache, "get_json", hit):
+        with mock.patch.object(overpass, "_fetch_with_mirrors", fetch):
+            places = asyncio.run(
+                overpass.search_restaurants(
+                    lat=34.0, lng=-118.5, radius_m=2000, diet_needs=["halal"]
+                )
+            )
+    assert [p.osmId for p in places] == [5]
+
+
+def test_an_empty_result_is_cached():
+    """"Nothing within 25km" is the costliest answer, so it is the one to keep."""
+    stored = {}
+
+    async def miss(_key):
+        return None
+
+    async def store(key, value, ttl_s=cache.DEFAULT_TTL_S):
+        stored[key] = value
+
+    async def fetch(query, timeout_s):
+        return {"elements": []}
+
+    with mock.patch.object(cache, "get_json", miss):
+        with mock.patch.object(cache, "set_json", store):
+            with mock.patch.object(overpass, "_fetch_with_mirrors", fetch):
+                asyncio.run(
+                    overpass.search_restaurants(
+                        lat=34.0, lng=-118.5, radius_m=25_000, diet_needs=["halal"]
+                    )
+                )
+    assert list(stored.values()) == [[]]
+
+
+def test_cache_key_separates_different_searches():
+    halal = build_overpass_query(34.0, -118.5, 2000, ["halal"])
+    both = build_overpass_query(34.0, -118.5, 2000, ["halal", "gluten-free"])
+    wider = build_overpass_query(34.0, -118.5, 25_000, ["halal"])
+    keys = {
+        cache.key_for("overpass", q) for q in (halal, both, wider)
+    }
+    assert len(keys) == 3
+    assert cache.key_for("overpass", halal) != cache.key_for("geocode", halal)
 
 
 # --- Radius-scaled timeouts ----------------------------------------------

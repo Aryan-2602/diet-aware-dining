@@ -86,6 +86,19 @@ python3 -m venv .venv                         # backend
 Copy `.env.example` to `.env` and set `OPENAI_API_KEY`. Without it the app still
 works — every agent falls back to a deterministic path.
 
+#### Caching (recommended for production)
+
+Set `KV_REST_API_URL` and `KV_REST_API_TOKEN` to point at a Vercel KV / Upstash
+Redis store; on Vercel, connecting the store to the project injects both
+automatically. Unset, the cache is a no-op and behaviour is unchanged.
+
+This matters more than it looks. Overpass and Nominatim are free services with
+no capacity guarantee — a saturated Overpass mirror answers with a 504, a 429
+or a hang, and one search issues up to four queries. Caching does not make the
+mirrors faster; it stops the app asking them the same question, which is what
+turns an intermittently failing search into a reliable one. Overpass results are
+cached for 6 hours and geocodes for 30 days.
+
 ### Run Development Servers
 
 Two processes. The Next.js dev server proxies `/api/*` to the Python API

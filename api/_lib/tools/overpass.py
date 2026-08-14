@@ -26,6 +26,7 @@ from typing import Any, Optional
 import httpx
 
 from ..errors import DiscoveryError
+from . import cache
 from .diet_tags import cuisine_filter, diet_filters_for_need
 
 #: Every entry MUST serve the whole planet. Many public Overpass instances are
@@ -167,8 +168,23 @@ async def search_restaurants(
     cuisine_type: Optional[str] = None,
 ) -> list[OverpassPlace]:
     query = build_overpass_query(lat, lng, radius_m, diet_needs, cuisine_type)
+
+    # Keyed on the query text, which already encodes the centre, the radius,
+    # every diet filter and the cuisine -- so two searches share a cache entry
+    # exactly when they would have sent Overpass the same bytes.
+    key = cache.key_for("overpass", query)
+    cached = await cache.read(key)
+    if cached is not None:
+        return _parse_elements(cached)
+
     payload = await _fetch_with_mirrors(query, timeout_for_radius(radius_m))
-    return _parse_elements(payload.get("elements") or [])
+    elements = payload.get("elements") or []
+
+    # Empty results are cached too, and deliberately: "nothing matches within
+    # 25km" is the most expensive answer this app computes and the one the
+    # mirrors are least likely to survive, so it is the one most worth keeping.
+    await cache.write(key, elements)
+    return _parse_elements(elements)
 
 
 async def _fetch_with_mirrors(query: str, timeout_s: float) -> dict[str, Any]:
