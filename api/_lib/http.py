@@ -1,7 +1,12 @@
 """FastAPI application serving the recommendation API.
 
-Deployed as a Vercel Python serverless function. The JSON contract is unchanged
-from the TypeScript routes it replaces, so the React frontend needs no edits.
+Lives under `_lib` so Vercel does not route to it directly. The thin files in
+`api/` (recommend.py, clarify.py, health.py) each re-export this `app`, so every
+function's file path matches the URL it serves — no rewrite, and therefore no
+mismatch between the path Vercel delivers and the path FastAPI declares.
+
+The JSON contract is unchanged from the TypeScript routes it replaced, so the
+React frontend needs no edits.
 
 A pipeline run has four distinct outcomes and they must not collapse into one.
 The original TypeScript route only checked for ``awaiting_clarification``; a
@@ -13,21 +18,14 @@ the UI rendered "No restaurants found" for every one of them.
 from __future__ import annotations
 
 import logging
-import os
-import sys
 from typing import Any, Optional
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-# Vercel imports this file directly rather than as a package member, so a
-# relative import of _lib would fail there. Putting this directory on the path
-# makes the same absolute import work locally and in the serverless runtime.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from _lib.agents.pipeline import AgentPipeline  # noqa: E402
-from _lib.types import DietaryRequest, parsed_intent_to_json  # noqa: E402
+from .agents.pipeline import AgentPipeline
+from .types import DietaryRequest, parsed_intent_to_json
 
 logging.basicConfig(level=logging.INFO)
 

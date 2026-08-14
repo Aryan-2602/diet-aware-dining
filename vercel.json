@@ -1,14 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/index.py": {
-      "runtime": "python3.12",
-      "maxDuration": 60
+    "api/*.py": {
+      "maxDuration": 60,
+      "includeFiles": "api/_lib/**"
     }
-  },
-  "rewrites": [
-    { "source": "/api/recommend", "destination": "/api/index" },
-    { "source": "/api/clarify", "destination": "/api/index" },
-    { "source": "/api/health", "destination": "/api/index" }
-  ]
+  }
 }

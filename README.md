@@ -38,7 +38,7 @@ A multi-agent AI system that discovers restaurants matching complex dietary need
 └────────────────────────────┬────────────────────────────┘
                              │ POST /api/recommend
 ┌────────────────────────────▼────────────────────────────┐
-│  Python Serverless Function (FastAPI, api/index.py)     │
+│  Python Serverless Functions (FastAPI, api/*.py)        │
 │  ┌────────────────────────────────────────────────────┐ │
 │  │  AgentPipeline Orchestrator (pipeline.ts)          │ │
 │  │                                                    │ │
@@ -111,8 +111,11 @@ npm run eval      # end-to-end against the real Nominatim/Overpass APIs
 
 ```
 api/                                 # Python backend (Vercel serverless)
-├── index.py                         # FastAPI app: /api/recommend, /api/clarify
+├── recommend.py                     # Vercel entrypoint -> /api/recommend
+├── clarify.py                       # Vercel entrypoint -> /api/clarify
+├── health.py                        # Vercel entrypoint -> /api/health
 └── _lib/
+    ├── http.py                      # The FastAPI app all three re-export
     ├── types.py                     # Domain types (camelCase = the wire contract)
     ├── errors.py                    # Typed discovery failures
     ├── llm_client.py                # Dependency-free OpenAI client

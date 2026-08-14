@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "eval": ".venv/bin/python scripts/eval.py",
-    "dev:api": ".venv/bin/uvicorn api.index:app --port 8000 --reload",
+    "dev:api": ".venv/bin/uvicorn api._lib.http:app --port 8000 --reload",
     "test:py": ".venv/bin/pytest -q"
   },
   "dependencies": {
