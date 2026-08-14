@@ -28,6 +28,19 @@ import httpx
 from ..errors import DiscoveryError
 from .diet_tags import cuisine_filter, diet_filters_for_need
 
+#: Every entry MUST serve the whole planet. Many public Overpass instances are
+#: regional extracts, and a regional one answers a query outside its region with
+#: HTTP 200 and zero elements -- indistinguishable here from "no such restaurant
+#: exists", which is the one wrong answer this app must never give someone with
+#: a dietary requirement. overpass.osm.ch was measured returning 0 elements for
+#: a Los Angeles query that overpass-api.de answered with 5, and is excluded for
+#: exactly that reason.
+#:
+#: Gate any new mirror on a control query with a known non-empty answer, e.g.
+#: halal within 10km of Santa Monica (34.0194, -118.4912), which must return >0:
+#:
+#:   nwr["amenity"~"^(restaurant|cafe|fast_food)$"]["name"]
+#:      ["diet:halal"~"^(yes|only)$"](around:10000,34.0194,-118.4912);
 OVERPASS_MIRRORS = (
     "https://overpass-api.de/api/interpreter",
     # overpass-api.de allows 2 slots per IP and returns 504s under load; this

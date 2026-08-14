@@ -162,6 +162,12 @@ class RestaurantDiscoveryAgent:
                     error.code,
                     error.message,
                 )
+                # Deliberately walks to the next rung rather than skipping to
+                # the widest the way a barren rung does. A barren rung is
+                # information -- it answered, and there was nothing there. A
+                # lost rung is not: against a saturated mirror the next attempt
+                # is a fresh roll, and measured against live Overpass, four
+                # cheap chances beat one expensive one.
                 index += 1
                 continue
 

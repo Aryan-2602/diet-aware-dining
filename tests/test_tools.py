@@ -406,6 +406,15 @@ def test_failed_rung_does_not_end_the_search():
     assert calls == [2000, 5000, 10_000]
 
 
+def test_a_lost_rung_walks_rather_than_skipping():
+    """A lost rung carries no information, so spend the budget on more chances."""
+    timeout = DiscoveryError("overpass_timeout", "Overpass timed out after 11s")
+    _, _, calls = ladder_run(
+        {2000: timeout, 5000: [halal_place(i) for i in range(3)], 10_000: [], 25_000: []}
+    )
+    assert calls == [2000, 5000]
+
+
 def test_partial_results_survive_a_later_failure():
     """Enough at 2km but under MIN_RESULTS, then an outage: show what we have."""
     places, searched, _ = ladder_run(
