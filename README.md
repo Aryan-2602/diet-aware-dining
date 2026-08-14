@@ -2,7 +2,7 @@
 
 🏆 **Winning project — Miro x Kiro Hackathon LA Chapter 2026**
 
-A multi-agent AI system that discovers restaurants matching complex dietary needs using **real-time OpenStreetMap data**. Built with Next.js, React, and a pipeline of LLM agents over a deterministic safety core — it only shows restaurants whose dietary tags it can actually verify.
+A multi-agent AI system that discovers restaurants matching complex dietary needs using **real-time OpenStreetMap data**. **Python** backend (FastAPI) running the agent pipeline, **Next.js/React** frontend — it only shows restaurants whose dietary tags it can actually verify.
 
 > "Halal food with gluten-free options near USC" → Real restaurants, confidence-scored, with Google Maps directions.
 
@@ -38,7 +38,7 @@ A multi-agent AI system that discovers restaurants matching complex dietary need
 └────────────────────────────┬────────────────────────────┘
                              │ POST /api/recommend
 ┌────────────────────────────▼────────────────────────────┐
-│  Next.js Server (API Routes)                            │
+│  Python Serverless Function (FastAPI, api/index.py)     │
 │  ┌────────────────────────────────────────────────────┐ │
 │  │  AgentPipeline Orchestrator (pipeline.ts)          │ │
 │  │                                                    │ │
@@ -69,30 +69,40 @@ A multi-agent AI system that discovers restaurants matching complex dietary need
 
 ### Prerequisites
 
-- Node.js 18+
-- npm
+- Node.js 18+ (frontend)
+- Python 3.12+ (backend)
 
 ### Installation
 
 ```bash
-git clone https://github.com/ambalikajaiswal/diet-aware-dining.git
+git clone https://github.com/Aryan-2602/diet-aware-dining.git
 cd diet-aware-dining
-npm install
+
+npm install                                   # frontend
+python3 -m venv .venv                         # backend
+.venv/bin/pip install -r requirements-dev.txt
 ```
 
-### Run Development Server
+Copy `.env.example` to `.env` and set `OPENAI_API_KEY`. Without it the app still
+works — every agent falls back to a deterministic path.
+
+### Run Development Servers
+
+Two processes. The Next.js dev server proxies `/api/*` to the Python API
+(see `next.config.mjs`); in production Vercel does this via `vercel.json`.
 
 ```bash
-npm run dev
+npm run dev:api   # FastAPI on :8000
+npm run dev       # Next.js on :3000
 ```
 
 Open [http://localhost:3000](http://localhost:3000)
 
-### Build for Production
+### Tests
 
 ```bash
-npm run build
-npm start
+npm run test:py   # 43 assertions over the safety functions, offline
+npm run eval      # end-to-end against the real Nominatim/Overpass APIs
 ```
 
 ---
@@ -100,29 +110,31 @@ npm start
 ## 📁 Project Structure
 
 ```
-src/
-├── agents/                          # Multi-agent pipeline
-│   ├── pipeline.ts                  # Orchestrator - coordinates all agents
-│   ├── dietary-intent-agent.ts      # Parses NL query → structured intent
-│   ├── clarification-agent.ts       # Asks follow-up if location ambiguous
-│   ├── restaurant-discovery-agent.ts # Queries Overpass API for real restaurants
-│   ├── evidence-verification-agent.ts # Restates OSM tags as evidence
-│   └── recommendation-agent.ts      # Ranks results, writes match reasons
-├── lib/
-│   ├── agent.ts                     # Tool-calling agent runtime
-│   ├── llm-client.ts                # Dependency-free OpenAI client
-│   ├── confidence-scorer.ts         # Deterministic scoring
-│   ├── map-service.ts               # Map bounds & markers
-│   ├── export-service.ts            # JSON/CSV/text export
-│   ├── errors.ts                    # Typed discovery failures
-│   └── tools/                       # Deterministic tools the agents call
-│       ├── diet-tags.ts             # Vocabulary → OSM tag mapping (safety core)
-│       ├── geocode.ts               # Nominatim, cached
-│       └── overpass.ts              # Overpass query builder + mirror failover
+api/                                 # Python backend (Vercel serverless)
+├── index.py                         # FastAPI app: /api/recommend, /api/clarify
+└── _lib/
+    ├── types.py                     # Domain types (camelCase = the wire contract)
+    ├── errors.py                    # Typed discovery failures
+    ├── llm_client.py                # Dependency-free OpenAI client
+    ├── agent.py                     # Tool-calling agent runtime
+    ├── confidence_scorer.py         # Deterministic scoring
+    ├── agents/
+    │   ├── pipeline.py              # Orchestrator
+    │   ├── dietary_intent.py        # NL query → structured intent
+    │   ├── clarification.py         # Asks follow-ups when genuinely blocked
+    │   ├── discovery.py             # Overpass search, deterministic
+    │   ├── evidence_verification.py # Restates OSM tags as evidence
+    │   └── recommendation.py        # Ranks results, writes match reasons
+    ├── services/
+    │   ├── map_service.py           # Map bounds & markers
+    │   └── export_service.py        # JSON/CSV/text export
+    └── tools/                       # Deterministic tools the agents call
+        ├── diet_tags.py             # Vocabulary → OSM tag mapping (safety core)
+        ├── geocode.py               # Nominatim, cached
+        └── overpass.py              # Query builder + mirror failover
+
+src/                                 # Next.js frontend
 ├── app/
-│   ├── api/
-│   │   ├── recommend/route.ts       # POST - main search endpoint
-│   │   └── clarify/route.ts         # POST - handle clarification answers
 │   ├── page.tsx                     # Main page with routing & state
 │   ├── layout.tsx                   # Root layout
 │   └── globals.css                  # Tailwind + Noto Sans font
@@ -142,9 +154,10 @@ src/
 └── types/
     └── index.ts                     # TypeScript interfaces for all entities
 
+tests/
+└── test_tools.py                    # Offline tests for the safety functions
 scripts/
-├── test-tools.ts                    # Offline tests for the safety functions
-└── eval.ts                          # End-to-end eval against the real APIs
+└── eval.py                          # End-to-end eval against the real APIs
 fixtures/                            # Overpass response for offline testing
 ```
 
@@ -204,8 +217,8 @@ Anything that changes *which* restaurants a person sees is reproducible.
 ### Verification
 
 ```bash
-npm run test:tools   # 35 assertions over the pure safety functions, offline
-npm run eval         # end-to-end against the real Nominatim/Overpass APIs
+npm run test:py   # 43 assertions over the pure safety functions, offline
+npm run eval      # end-to-end against the real Nominatim/Overpass APIs
 ```
 
 The eval reports upstream outages as `SKIP` — Overpass allows 2 slots per IP and

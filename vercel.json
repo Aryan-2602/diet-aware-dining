@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/index.py": {
+      "runtime": "python3.12",
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    { "source": "/api/recommend", "destination": "/api/index" },
+    { "source": "/api/clarify", "destination": "/api/index" },
+    { "source": "/api/health", "destination": "/api/index" }
+  ]
+}
