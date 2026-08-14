@@ -35,12 +35,23 @@ OVERPASS_MIRRORS = (
     "https://overpass.kumi.systems/api/interpreter",
 )
 
-# Kept tight deliberately: the mirrors are raced, so this bounds a whole round
-# rather than one attempt in a chain. Overpass answers a diet-filtered query in
-# a few seconds when healthy; a slow response means it is saturated, and the
-# other mirror is the better bet.
-TIMEOUT_S = 12.0
-SERVER_TIMEOUT_S = 12
+# Timeouts scale with the radius because the query cost does. Measured against
+# a healthy mirror for a two-need filter around Santa Monica: 3.8s at 2km, ~9s
+# at 10km, 13.8s at 25km. A flat 12s budget therefore could not express "no
+# such restaurant within 25km" -- the widest rung, the one that settles the
+# question, timed out every time and a definitive empty answer was reported as
+# an outage.
+BASE_TIMEOUT_S = 10.0
+TIMEOUT_PER_KM_S = 0.6
+MAX_TIMEOUT_S = 28.0
+
+# The second mirror is only brought up if the first has gone quiet for this
+# long. Firing both immediately halves latency on paper but doubles the load on
+# a free service, and Overpass answers with HTTP 429 once a client is too
+# eager -- which is itself indistinguishable from an outage at this layer.
+# Hedging keeps the failover but pays for it only when the first mirror stalls.
+HEDGE_DELAY_S = 5.0
+
 MAX_ELEMENTS = 200
 MAX_STATEMENTS = 8
 AMENITIES = ("restaurant", "cafe", "fast_food")
@@ -85,6 +96,16 @@ def diet_filter_combinations(needs: list[str]) -> list[list[str]]:
     return combos
 
 
+def timeout_for_radius(radius_m: float) -> float:
+    """Seconds to allow a query covering ``radius_m``.
+
+    Used for both the client deadline and Overpass's own ``[timeout:]``, so the
+    two cannot disagree -- a server timeout longer than the client's wastes the
+    work, and a shorter one turns a completable query into a ``remark``.
+    """
+    return min(MAX_TIMEOUT_S, BASE_TIMEOUT_S + (radius_m / 1000.0) * TIMEOUT_PER_KM_S)
+
+
 def build_overpass_query(
     lat: float,
     lng: float,
@@ -110,7 +131,7 @@ def build_overpass_query(
 
     return "\n".join(
         [
-            f"[out:json][timeout:{SERVER_TIMEOUT_S}];",
+            f"[out:json][timeout:{round(timeout_for_radius(radius_m))}];",
             "(",
             *statements,
             ");",
@@ -127,41 +148,54 @@ async def search_restaurants(
     cuisine_type: Optional[str] = None,
 ) -> list[OverpassPlace]:
     query = build_overpass_query(lat, lng, radius_m, diet_needs, cuisine_type)
-    payload = await _fetch_with_mirrors(query)
+    payload = await _fetch_with_mirrors(query, timeout_for_radius(radius_m))
     return _parse_elements(payload.get("elements") or [])
 
 
-async def _fetch_with_mirrors(query: str) -> dict[str, Any]:
-    """Races the mirrors and takes the first success.
+async def _fetch_with_mirrors(query: str, timeout_s: float) -> dict[str, Any]:
+    """Tries the mirrors with a hedge, and returns the first success.
 
-    Trying them in sequence cost the *sum* of both timeouts whenever the first
-    was saturated, and the mirrors saturate independently and unpredictably:
-    measured across one radius ladder, overpass-api.de answered the 2 km query
-    in 2.5s then 504'd on 5 km, while kumi.systems did the reverse. Sequencing
-    them meant a healthy mirror sat idle behind a dead one for 12s, and two
-    rungs of that put a single search past the 60s function limit.
+    The mirrors saturate independently and per-query -- measured across one
+    radius ladder, overpass-api.de answered the 2km query in 2.5s then 504'd on
+    5km while kumi.systems did the reverse -- so failover is worth having. But
+    a strict chain makes a healthy mirror wait out a dead one's full timeout,
+    and firing both at once doubles the load on a free service into HTTP 429s.
 
-    Racing bounds a round at one timeout instead of two and picks whichever
-    mirror is healthy at this moment. A mirror that fails fast does not end the
-    round -- the loop keeps waiting on the others, and only a clean sweep raises.
+    So the next mirror starts only once the previous has been quiet for
+    HEDGE_DELAY_S, or immediately if it has already failed. The common case
+    costs one request; a stall costs two and overlaps them.
     """
-    tasks = [
-        asyncio.create_task(_fetch_overpass(url, query))
-        for url in OVERPASS_MIRRORS
-    ]
+    tasks: set[asyncio.Task[dict[str, Any]]] = set()
     last_error: Optional[DiscoveryError] = None
     try:
-        for completed in asyncio.as_completed(tasks):
-            try:
-                return await completed
-            except DiscoveryError as error:
-                last_error = error
+        for index, url in enumerate(OVERPASS_MIRRORS):
+            tasks.add(asyncio.create_task(_fetch_overpass(url, query, timeout_s)))
+            is_last = index == len(OVERPASS_MIRRORS) - 1
+
+            while tasks:
+                done, tasks = await asyncio.wait(
+                    tasks,
+                    timeout=None if is_last else HEDGE_DELAY_S,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
+                    break  # still working -- bring the next mirror up alongside it
+
+                for task in done:
+                    error = task.exception()
+                    if error is None:
+                        return task.result()
+                    if not isinstance(error, DiscoveryError):
+                        raise error
+                    last_error = error
+
+                if not tasks:
+                    break  # everything in flight failed -- escalate now, do not wait
     finally:
-        # The losers are cancelled and reaped, so a slow mirror cannot outlive
-        # the request or surface as a never-retrieved task exception.
+        # Losers are cancelled and reaped so a stalled mirror cannot outlive the
+        # request or surface as a never-retrieved task exception.
         for task in tasks:
-            if not task.done():
-                task.cancel()
+            task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
     raise last_error or DiscoveryError(
@@ -169,9 +203,11 @@ async def _fetch_with_mirrors(query: str) -> dict[str, Any]:
     )
 
 
-async def _fetch_overpass(url: str, query: str) -> dict[str, Any]:
+async def _fetch_overpass(
+    url: str, query: str, timeout_s: float
+) -> dict[str, Any]:
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
             response = await client.post(
                 url,
                 data={"data": query},
@@ -179,7 +215,7 @@ async def _fetch_overpass(url: str, query: str) -> dict[str, Any]:
             )
     except httpx.TimeoutException:
         raise DiscoveryError(
-            "overpass_timeout", f"Overpass timed out after {TIMEOUT_S}s"
+            "overpass_timeout", f"Overpass timed out after {timeout_s:.0f}s"
         ) from None
     except httpx.HTTPError as error:
         raise DiscoveryError("overpass_unavailable", str(error)) from None

@@ -21,7 +21,13 @@ from ..tools.diet_tags import (
     partition_needs,
 )
 from ..tools.geocode import GeocodeResult, geocode
-from ..tools.overpass import OverpassPlace, distance_meters, search_restaurants
+from ..tools.overpass import (
+    MAX_ELEMENTS,
+    OverpassPlace,
+    distance_meters,
+    search_restaurants,
+    timeout_for_radius,
+)
 from ..types import Coordinates, ParsedIntent, Restaurant
 
 # Fixed ladder. Widening when there are too few matches is a mechanical decision
@@ -35,10 +41,9 @@ MIN_RESULTS = 3
 MAX_RESULTS = 15
 
 # The whole ladder has to fit inside the 60s function limit with the geocode,
-# the LLM intent call and scoring alongside it. Each rung is bounded by the
-# Overpass client timeout, so stopping before a rung that cannot finish keeps
-# the worst case at roughly this budget plus one rung.
-SEARCH_BUDGET_S = 40.0
+# the LLM intent call and scoring alongside it. A rung is only started when its
+# own worst case still fits, so the ladder cannot overrun this.
+SEARCH_BUDGET_S = 45.0
 
 logger = logging.getLogger(__name__)
 
@@ -116,8 +121,22 @@ class RestaurantDiscoveryAgent:
         last_error: Optional[DiscoveryError] = None
         deadline = time.monotonic() + SEARCH_BUDGET_S
 
-        for radius_m in RADIUS_LADDER_M:
-            if time.monotonic() >= deadline:
+        radii = list(RADIUS_LADDER_M)
+        widest = len(radii) - 1
+        index = 0
+        #: Rung the early widen came from, so a truncated jump can resume there.
+        jumped_from: Optional[int] = None
+
+        while index < len(radii):
+            radius_m = radii[index]
+
+            # Budgeted on the rung's own cost rather than the clock alone, so a
+            # rung is never started that cannot finish inside the limit. The
+            # hedge is deliberately not reserved on top: a hedged mirror runs
+            # alongside the first rather than after it, so it can only push past
+            # the deadline by HEDGE_DELAY_S, and reserving it as well cost the
+            # 10km rung -- the one that actually answers a sparse search.
+            if time.monotonic() + timeout_for_radius(radius_m) > deadline:
                 logger.warning(
                     "[Discovery] search budget spent, stopping before the %dm rung",
                     radius_m,
@@ -143,6 +162,7 @@ class RestaurantDiscoveryAgent:
                     error.code,
                     error.message,
                 )
+                index += 1
                 continue
 
             places = found
@@ -150,8 +170,28 @@ class RestaurantDiscoveryAgent:
             usable = [
                 p for p in places if matches_all_needs(p.tags, enforceable_needs)
             ]
+
+            # The jump landed on a truncated response, so "nearest" cannot be
+            # read off it -- resume the walk from where it left off, at radii
+            # whose result counts fit under the cap.
+            if jumped_from is not None and len(places) >= MAX_ELEMENTS:
+                index, jumped_from = jumped_from + 1, None
+                continue
+
             if len(usable) >= MIN_RESULTS:
                 break
+
+            # Not one match at this radius. The intermediate rungs cost a full
+            # timeout each and cannot settle a question the widest one answers
+            # outright, so skip to it -- two requests instead of four, which is
+            # what makes an honest "nothing within 25km" affordable at all.
+            # _tightest_useful_radius rebuilds the real radius from distances.
+            if not usable and jumped_from is None and index < widest:
+                jumped_from = index
+                index = widest
+                continue
+
+            index += 1
 
         # Degrading to a partial answer is only honest while there is something
         # to show. With nothing to show and a rung that never completed, the

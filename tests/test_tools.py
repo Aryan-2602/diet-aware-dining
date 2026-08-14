@@ -391,11 +391,11 @@ def halal_place(osm_id: int) -> OverpassPlace:
 
 
 def test_failed_rung_does_not_end_the_search():
-    """The reported bug: 0 at 2km, both mirrors 504 at 5km, 5 results at 10km."""
-    timeout = DiscoveryError("overpass_timeout", "Overpass timed out after 12.0s")
+    """One match at 2km, both mirrors 504 at 5km, 5 results at 10km."""
+    timeout = DiscoveryError("overpass_timeout", "Overpass timed out after 25s")
     places, searched, calls = ladder_run(
         {
-            2000: [],
+            2000: [halal_place(9)],
             5000: timeout,
             10_000: [halal_place(i) for i in range(5)],
             25_000: [],
@@ -441,7 +441,46 @@ def test_genuinely_empty_search_still_reports_empty():
     )
     assert places == []
     assert searched == 25_000
-    assert calls == [2000, 5000, 10_000, 25_000]
+
+
+def test_a_barren_rung_skips_straight_to_the_widest():
+    """The reported hang: halal+gluten-free has no match at any radius.
+
+    Four rungs at a wide-radius timeout each cannot fit the function limit, so
+    the intermediate ones -- which cannot settle a question the widest answers
+    outright -- are skipped.
+    """
+    _, searched, calls = ladder_run({2000: [], 5000: [], 10_000: [], 25_000: []})
+    assert calls == [2000, 25_000]
+    assert searched == 25_000
+
+
+def test_a_rung_with_some_matches_still_widens_one_step():
+    """Only a *barren* rung justifies the jump; a thin one may fill in next rung."""
+    _, _, calls = ladder_run(
+        {
+            2000: [halal_place(1)],
+            5000: [halal_place(i) for i in range(3)],
+            10_000: [],
+            25_000: [],
+        }
+    )
+    assert calls == [2000, 5000]
+
+
+def test_a_truncated_jump_resumes_the_normal_walk():
+    """At the element cap "nearest" is unreadable, so the skipped rungs are run."""
+    capped = [halal_place(i) for i in range(overpass.MAX_ELEMENTS)]
+    _, searched, calls = ladder_run(
+        {
+            2000: [],
+            5000: [halal_place(i) for i in range(3)],
+            10_000: [],
+            25_000: capped,
+        }
+    )
+    assert calls == [2000, 25_000, 5000]
+    assert searched == 5000
 
 
 def test_ladder_stops_when_the_time_budget_is_spent():
@@ -458,7 +497,7 @@ def test_ladder_stops_when_the_time_budget_is_spent():
     clock = mock.Mock(monotonic=lambda: elapsed)
     with mock.patch.object(discovery, "time", clock):
         places, _, calls = ladder_run(
-            {2000: [], 5000: [halal_place(1)], 10_000: [], 25_000: []},
+            {2000: [halal_place(2)], 5000: [halal_place(1)], 10_000: [], 25_000: []},
             on_rung=spend,
         )
     assert calls == [2000, 5000]
@@ -468,37 +507,85 @@ def test_ladder_stops_when_the_time_budget_is_spent():
 # --- Overpass mirror racing ----------------------------------------------
 
 
-def test_race_takes_the_first_mirror_to_answer():
-    async def fetch(url, query):
-        if "kumi" in url:
-            return {"elements": [{"id": 1}]}
-        await asyncio.sleep(0.2)
-        return {"elements": [{"id": 2}]}
+def test_healthy_first_mirror_is_not_hedged():
+    """The common case must cost one request -- hedging every call invites 429s."""
+    tried: list[str] = []
+
+    async def fetch(url, query, timeout_s):
+        tried.append(url)
+        return {"elements": [{"id": 1}]}
 
     with mock.patch.object(overpass, "_fetch_overpass", fetch):
-        payload = asyncio.run(overpass._fetch_with_mirrors("q"))
+        payload = asyncio.run(overpass._fetch_with_mirrors("q", 10.0))
     assert payload["elements"] == [{"id": 1}]
+    assert tried == [overpass.OVERPASS_MIRRORS[0]]
 
 
-def test_race_waits_out_a_mirror_that_fails_fast():
-    """A quick 504 from one mirror must not pre-empt a healthy slower one."""
+def test_a_fast_failure_brings_the_next_mirror_up_immediately():
+    """A 504 must not cost the hedge delay before failing over."""
+    tried: list[str] = []
 
-    async def fetch(url, query):
-        if "kumi" in url:
+    async def fetch(url, query, timeout_s):
+        tried.append(url)
+        if url == overpass.OVERPASS_MIRRORS[0]:
             raise DiscoveryError("overpass_unavailable", "Overpass returned 504")
-        await asyncio.sleep(0.05)
         return {"elements": [{"id": 7}]}
 
     with mock.patch.object(overpass, "_fetch_overpass", fetch):
-        payload = asyncio.run(overpass._fetch_with_mirrors("q"))
+        with mock.patch.object(overpass, "HEDGE_DELAY_S", 30.0):
+            payload = asyncio.run(overpass._fetch_with_mirrors("q", 10.0))
     assert payload["elements"] == [{"id": 7}]
+    assert tried == list(overpass.OVERPASS_MIRRORS)
 
 
-def test_race_raises_only_when_every_mirror_fails():
-    async def fetch(url, query):
-        raise DiscoveryError("overpass_timeout", "Overpass timed out after 12.0s")
+def test_a_stalled_mirror_is_hedged_and_the_loser_is_cancelled():
+    started: list[str] = []
+    cancelled = False
+
+    async def fetch(url, query, timeout_s):
+        nonlocal cancelled
+        started.append(url)
+        if url == overpass.OVERPASS_MIRRORS[0]:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+        return {"elements": [{"id": 9}]}
+
+    with mock.patch.object(overpass, "_fetch_overpass", fetch):
+        with mock.patch.object(overpass, "HEDGE_DELAY_S", 0.05):
+            payload = asyncio.run(overpass._fetch_with_mirrors("q", 10.0))
+    assert payload["elements"] == [{"id": 9}]
+    assert started == list(overpass.OVERPASS_MIRRORS)
+    assert cancelled
+
+
+def test_raises_only_when_every_mirror_fails():
+    async def fetch(url, query, timeout_s):
+        raise DiscoveryError("overpass_timeout", "Overpass timed out after 25s")
 
     with mock.patch.object(overpass, "_fetch_overpass", fetch):
         with pytest.raises(DiscoveryError) as caught:
-            asyncio.run(overpass._fetch_with_mirrors("q"))
+            asyncio.run(overpass._fetch_with_mirrors("q", 10.0))
     assert caught.value.code == "overpass_timeout"
+
+
+# --- Radius-scaled timeouts ----------------------------------------------
+
+
+def test_timeout_grows_with_radius():
+    """A flat budget could not express "nothing within 25km": that query needs ~14s."""
+    assert overpass.timeout_for_radius(2000) < overpass.timeout_for_radius(25_000)
+    assert overpass.timeout_for_radius(25_000) >= 14.0
+
+
+def test_timeout_is_capped():
+    assert overpass.timeout_for_radius(10**9) == overpass.MAX_TIMEOUT_S
+
+
+def test_server_timeout_matches_the_client_deadline():
+    """A server timeout longer than the client's just wastes the work."""
+    query = build_overpass_query(34.0, -118.5, 25_000, ["halal"])
+    expected = round(overpass.timeout_for_radius(25_000))
+    assert f"[out:json][timeout:{expected}]" in query
