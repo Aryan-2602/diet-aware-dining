@@ -96,22 +96,34 @@ export default function Home() {
           result.recommendations,
           result.mapData || null,
           result.parsedIntent || null,
-          result.metadata
+          result.metadata,
+          result.meta
         );
         addRecentSearch(request, result.recommendations.length);
+        setProcessingState({ phase: "idle" });
+        setPage("results");
+      } else if (result.status === "no_matches") {
+        // The search ran and genuinely found nothing. That is a result, not an
+        // error — show the results page so it can explain what was searched.
+        setResults([], null, result.parsedIntent || null, null, result.meta);
+        addRecentSearch(request, 0);
         setProcessingState({ phase: "idle" });
         setPage("results");
       } else {
         setProcessingState({
           phase: "error",
-          message: result.error || "Something went wrong",
+          message: result.message || "Something went wrong",
         });
+        // The error banner only renders on the search page; without this the
+        // user was left on a blank interpretation screen with no message.
+        setPage("search");
       }
     } catch {
       setProcessingState({
         phase: "error",
         message: "Failed to connect to the server",
       });
+      setPage("search");
     } finally {
       setIsLoading(false);
     }
@@ -136,6 +148,28 @@ export default function Home() {
 
       const result = await response.json();
 
+      // A clarified location can still be ambiguous, in which case the answer
+      // is another question — not a completed search. This branch did not exist,
+      // so the response fell through and `undefined` was written to the store.
+      if (result.status === "awaiting_clarification") {
+        setProcessingState({
+          phase: "clarification",
+          questions: result.clarificationNeeded,
+          originalRequest: processingState.originalRequest,
+        });
+        setPage("search");
+        return;
+      }
+
+      if (result.status === "error") {
+        setProcessingState({
+          phase: "error",
+          message: result.message || "Something went wrong",
+        });
+        setPage("search");
+        return;
+      }
+
       const remainingAgents: AgentName[] = [
         "evidence_verification",
         "trust_confidence",
@@ -148,13 +182,17 @@ export default function Home() {
         await delay(300);
       }
 
+      const recommendations = Array.isArray(result.recommendations)
+        ? result.recommendations
+        : [];
       setResults(
-        result.recommendations,
+        recommendations,
         result.mapData || null,
         result.parsedIntent || null,
-        result.metadata
+        result.metadata,
+        result.meta
       );
-      addRecentSearch(processingState.originalRequest, result.recommendations.length);
+      addRecentSearch(processingState.originalRequest, recommendations.length);
       setProcessingState({ phase: "idle" });
       setPage("results");
     } catch {
@@ -162,6 +200,7 @@ export default function Home() {
         phase: "error",
         message: "Failed to process clarification",
       });
+      setPage("search");
     } finally {
       setIsLoading(false);
     }

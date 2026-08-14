@@ -16,6 +16,23 @@ export interface RecentSearch {
   resultCount: number;
 }
 
+export interface SearchMetadata {
+  totalFound: number;
+  candidatesScanned?: number;
+  verified: number;
+  avgConfidence: number;
+}
+
+/** Reported to the user so an empty result set can explain itself. */
+export interface SearchMeta {
+  enforceableNeeds: string[];
+  unenforceableNeeds: string[];
+  effectiveRadiusM: number;
+  radiusSearchedM: number;
+  candidatesScanned: number;
+  resolvedLocation: string;
+}
+
 export interface SavedRestaurant {
   id: string;
   recommendation: Recommendation;
@@ -38,12 +55,15 @@ interface AppStore {
   recommendations: Recommendation[];
   mapData: MapData | null;
   parsedIntent: ParsedIntent | null;
-  metadata: { totalFound: number; verified: number; avgConfidence: number } | null;
+  metadata: SearchMetadata | null;
+  /** What the search actually did — radius, needs OSM could not express. */
+  searchMeta: SearchMeta | null;
   setResults: (
     recommendations: Recommendation[],
     mapData: MapData | null,
     parsedIntent: ParsedIntent | null,
-    metadata: { totalFound: number; verified: number; avgConfidence: number }
+    metadata: SearchMetadata | null,
+    searchMeta?: SearchMeta | null
   ) => void;
   clearResults: () => void;
 
@@ -75,14 +95,24 @@ export const useAppStore = create<AppStore>()(
       mapData: null,
       parsedIntent: null,
       metadata: null,
-      setResults: (recommendations, mapData, parsedIntent, metadata) =>
-        set({ recommendations, mapData, parsedIntent, metadata }),
+      searchMeta: null,
+      // Coerced defensively: a failed response used to write `undefined` here,
+      // after which ResultsMapView crashed spreading it and the app white-screened.
+      setResults: (recommendations, mapData, parsedIntent, metadata, searchMeta) =>
+        set({
+          recommendations: Array.isArray(recommendations) ? recommendations : [],
+          mapData: mapData ?? null,
+          parsedIntent: parsedIntent ?? null,
+          metadata: metadata ?? null,
+          searchMeta: searchMeta ?? null,
+        }),
       clearResults: () =>
         set({
           recommendations: [],
           mapData: null,
           parsedIntent: null,
           metadata: null,
+          searchMeta: null,
         }),
 
       // Selected restaurant
@@ -130,7 +160,12 @@ export const useAppStore = create<AppStore>()(
       },
     }),
     {
-      name: "dietary-ai-storage",
+      // Bumped: restaurant ids changed from `osm-<id>` to `osm-<type>-<id>`,
+      // and Restaurant lost the fabricated rating/priceLevel/source fields.
+      // Rehydrating pre-existing saves would put objects of the old shape into
+      // components that now index the new one.
+      name: "dietary-ai-storage-v2",
+      version: 2,
       partialize: (state) => ({
         recentSearches: state.recentSearches,
         savedRestaurants: state.savedRestaurants,

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AgentPipeline } from "@/agents/pipeline";
 import { DietaryRequest } from "@/types";
+import { respondWithPipeline } from "../_shared/respond";
+
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,44 +15,42 @@ export async function POST(request: NextRequest) {
 
     if (!originalRequest || !answers) {
       return NextResponse.json(
-        { error: "originalRequest and answers are required" },
+        {
+          status: "error",
+          code: "bad_request",
+          message: "originalRequest and answers are required",
+        },
         { status: 400 }
       );
     }
 
-    // Rebuild the request with clarified information
+    // Every answer is merged, not just the location. The clarification agent
+    // asks about dietary needs and meal type too, and the dialog lets the user
+    // answer them — those answers used to be dropped on the floor here, so the
+    // re-run was byte-identical to the request that had just asked for them.
     const clarifiedRequest: DietaryRequest = {
       ...originalRequest,
-      location: answers.location || originalRequest.location,
+      location: answers.location?.trim() || originalRequest.location,
+      dietaryPreferences: [
+        ...originalRequest.dietaryPreferences,
+        ...(answers.dietaryNeeds ? [answers.dietaryNeeds] : []),
+      ],
     };
 
-    // Re-run the pipeline with clarified info
     const pipeline = new AgentPipeline();
-    const recommendations = await pipeline.run(clarifiedRequest);
-    const state = pipeline.getState();
+    await pipeline.run(clarifiedRequest);
 
-    return NextResponse.json({
-      status: "complete",
-      recommendations,
-      parsedIntent: state.parsedIntent,
-      mapData: state.mapData,
-      metadata: {
-        totalFound: state.restaurants.length,
-        verified: state.evidence.filter((e) => e.verified).length,
-        avgConfidence:
-          state.confidenceScores.length > 0
-            ? Math.round(
-                (state.confidenceScores.reduce((sum, s) => sum + s.overall, 0) /
-                  state.confidenceScores.length) *
-                  100
-              ) / 100
-            : 0,
-      },
-    });
+    // Shares the responder with /recommend, so a still-ambiguous location comes
+    // back as another question instead of a false "complete" with zero results.
+    return respondWithPipeline(pipeline);
   } catch (error) {
     console.error("Clarification error:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      {
+        status: "error",
+        code: "internal",
+        message: "Something went wrong applying your answer",
+      },
       { status: 500 }
     );
   }

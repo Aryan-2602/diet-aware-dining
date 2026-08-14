@@ -12,17 +12,68 @@ export function ResultsMapView() {
   const mapData = useAppStore((s) => s.mapData);
   const metadata = useAppStore((s) => s.metadata);
   const parsedIntent = useAppStore((s) => s.parsedIntent);
+  const searchMeta = useAppStore((s) => s.searchMeta);
   const setPage = useAppStore((s) => s.setPage);
   const [sortMode, setSortMode] = useState<SortMode>("confidence");
 
   const sortedRecommendations = sortResults(recommendations, sortMode);
 
   if (recommendations.length === 0) {
+    // An empty result set explains itself: which constraint, how far we looked,
+    // how many places were considered. The previous copy — "try broadening your
+    // search" — was shown identically for geocode failures, rate limits and
+    // genuine emptiness, and told the user nothing about which had happened.
+    const needs = searchMeta?.enforceableNeeds ?? [];
+    const km = searchMeta ? Math.round(searchMeta.radiusSearchedM / 1000) : null;
+
     return (
-      <div className="text-center py-20">
+      <div className="max-w-xl mx-auto text-center py-16">
         <div className="text-6xl mb-4">🔍</div>
-        <h2 className="text-xl font-bold text-gray-800 mb-2">No restaurants found</h2>
-        <p className="text-gray-500 mb-6">Try broadening your search or changing location</p>
+        <h2 className="text-xl font-bold text-gray-800 mb-3">
+          No verified matches
+        </h2>
+
+        {searchMeta ? (
+          <p className="text-gray-600 mb-2">
+            No restaurant within {km} km of{" "}
+            <span className="font-medium">{searchMeta.resolvedLocation}</span>{" "}
+            {needs.length > 0 ? (
+              <>
+                is tagged{" "}
+                <span className="font-medium">{needs.join(" and ")}</span> in
+                OpenStreetMap.
+              </>
+            ) : (
+              "matched your search."
+            )}
+          </p>
+        ) : (
+          <p className="text-gray-600 mb-2">
+            Nothing matched your search.
+          </p>
+        )}
+
+        {searchMeta && searchMeta.candidatesScanned > 0 && (
+          <p className="text-sm text-gray-500 mb-2">
+            We checked {searchMeta.candidatesScanned} places.
+          </p>
+        )}
+
+        <p className="text-sm text-gray-500 mb-6">
+          We only show places whose dietary tags we can verify, so we would
+          rather show you nothing than a guess.
+        </p>
+
+        {searchMeta && searchMeta.unenforceableNeeds.length > 0 && (
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-6 text-left">
+            OpenStreetMap has no tag for{" "}
+            <span className="font-medium">
+              {searchMeta.unenforceableNeeds.join(", ")}
+            </span>
+            , so that part of your request could not be checked at all.
+          </p>
+        )}
+
         <button
           onClick={() => setPage("search")}
           className="px-6 py-2.5 text-primary-600 font-semibold hover:bg-primary-50 rounded-full transition-colors border border-primary-200"
