@@ -1,3 +1,8 @@
+/**
+ * Client app state. Navigation and live search results are in-memory only;
+ * a refresh always returns to the landing screen. Only `recentSearches` and
+ * `savedRestaurants` are written to localStorage (`dietary-ai-storage-v2`).
+ */
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
@@ -7,6 +12,7 @@ import {
   ParsedIntent,
 } from "@/types";
 
+/** One past query, kept so SavedRecentView can re-display it (not re-run it). */
 export interface RecentSearch {
   id: string;
   query: string;
@@ -16,6 +22,7 @@ export interface RecentSearch {
   resultCount: number;
 }
 
+/** Counts for the results header: what was shown, not every discarded candidate. */
 export interface SearchMetadata {
   totalFound: number;
   candidatesScanned?: number;
@@ -33,6 +40,7 @@ export interface SearchMeta {
   resolvedLocation: string;
 }
 
+/** A recommendation the user pinned; the full object is stored, not just an id. */
 export interface SavedRestaurant {
   id: string;
   recommendation: Recommendation;
@@ -83,6 +91,7 @@ interface AppStore {
   isRestaurantSaved: (restaurantId: string) => boolean;
 }
 
+/** Hook for navigation, live results, and persisted saves/recents. */
 export const useAppStore = create<AppStore>()(
   persist(
     (set, get) => ({

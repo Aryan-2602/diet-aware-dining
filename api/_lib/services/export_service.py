@@ -37,6 +37,7 @@ class ExportService:
     async def process(
         self, recommendations: list[Recommendation], fmt: ExportFormat = "json"
     ) -> ExportResult:
+        """Serialize recommendations; never includes ratings, reviews or prices."""
         if fmt == "text":
             return self._export_text(recommendations)
         if fmt == "csv":

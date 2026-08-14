@@ -1,3 +1,7 @@
+/**
+ * Next.js root layout. The only server-rendered shell; all screens live in
+ * the client `page.tsx` and swap via Zustand rather than extra routes.
+ */
 import type { Metadata } from "next";
 import "./globals.css";
 
@@ -7,6 +11,7 @@ export const metadata: Metadata = {
     "AI-powered restaurant recommendations based on your dietary preferences",
 };
 
+/** HTML shell only; page switching happens in the client Home component. */
 export default function RootLayout({
   children,
 }: {

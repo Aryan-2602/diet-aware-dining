@@ -1,7 +1,12 @@
 "use client";
 
+/**
+ * Full restaurant screen. Requires `selectedRestaurant` in the store — there
+ * is no URL param, so a direct visit or refresh with no selection shows empty.
+ */
 import { useAppStore } from "@/store";
 
+/** Detail + save/unsave for the currently selected recommendation. */
 export function RestaurantDetails() {
   const selectedRestaurant = useAppStore((s) => s.selectedRestaurant);
   const setPage = useAppStore((s) => s.setPage);

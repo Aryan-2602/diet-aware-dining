@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Follow-up questions from ClarificationAgent. Answers are keyed by
+ * `question.field` (`location`, `dietaryNeeds`, …) and POSTed as
+ * `Record<string, string>` to `/api/clarify`.
+ */
 import { useState } from "react";
 import { ClarificationQuestion } from "@/types";
 
@@ -8,6 +13,7 @@ interface ClarificationDialogProps {
   onSubmit: (answers: Record<string, string>) => void;
 }
 
+/** Follow-up form; submit sends `{ [field]: answer }` to the parent. */
 export function ClarificationDialog({
   questions,
   onSubmit,

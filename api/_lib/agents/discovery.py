@@ -56,6 +56,7 @@ class DiscoveryOutcome:
 
 class RestaurantDiscoveryAgent:
     async def process(self, intent: ParsedIntent) -> DiscoveryOutcome:
+        """Geocode once, then Overpass with a widening radius ladder."""
         # Geocoding happens exactly once. The original implementation
         # re-geocoded inside its relaxation recursion, issuing three requests
         # per search against a 1-req/s service.

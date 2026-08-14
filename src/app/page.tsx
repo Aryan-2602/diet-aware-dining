@@ -1,5 +1,14 @@
 "use client";
 
+/**
+ * Root client page — a Zustand-driven SPA, not a Next.js multi-route app.
+ *
+ * Screens swap via `currentPage` in the store. There is no `/results` URL;
+ * a refresh always lands on "landing". Search is one blocking POST to the
+ * Python API; the agent-step delays below are cosmetic so InterpretationView
+ * can animate while that call is in flight (or after it returns).
+ */
+
 import { useState } from "react";
 import { useAppStore } from "@/store";
 import { LandingPage } from "@/components/LandingPage";
@@ -17,6 +26,7 @@ import {
   DietaryRequest,
 } from "@/types";
 
+/** Local UI state for the in-flight search; results themselves live in the store. */
 type ProcessingState =
   | { phase: "idle" }
   | { phase: "processing"; currentAgent: AgentName }
@@ -38,6 +48,13 @@ export default function Home() {
   });
   const [isLoading, setIsLoading] = useState(false);
 
+  /**
+   * POST `/api/recommend`. Status branches:
+   * - `awaiting_clarification` → ClarificationDialog on the search screen
+   * - `complete` → store results, go to the map
+   * - `no_matches` → still a result (empty set with searchMeta), not an error
+   * - anything else / network failure → error banner on search
+   */
   const handleSearch = async (data: {
     query: string;
     location: string;
@@ -58,6 +75,9 @@ export default function Home() {
         cuisinePreferences: data.cuisinePreferences,
       };
 
+      // Cosmetic: the pipeline is a single POST. These delays only drive the
+      // InterpretationView stepper so the user sees "intent" then "discovery"
+      // before the response arrives.
       const earlyAgents: AgentName[] = ["dietary_intent", "restaurant_discovery"];
       for (const agent of earlyAgents) {
         setProcessingState({ phase: "processing", currentAgent: agent });
@@ -80,6 +100,7 @@ export default function Home() {
         });
         setPage("search");
       } else if (result.status === "complete") {
+        // Remaining steps animate after the API returns — the work is already done.
         const lateAgents: AgentName[] = [
           "evidence_verification",
           "trust_confidence",
@@ -129,6 +150,10 @@ export default function Home() {
     }
   };
 
+  /**
+   * Resume after ClarificationDialog. `/api/clarify` re-runs the full pipeline
+   * with the merged request; it does not resume an in-memory AgentPipeline.
+   */
   const handleClarification = async (answers: Record<string, string>) => {
     if (processingState.phase !== "clarification") return;
 
@@ -323,6 +348,7 @@ export default function Home() {
   );
 }
 
+/** Desktop header link; active state comes from Zustand, not the URL. */
 function NavLink({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
@@ -336,6 +362,7 @@ function NavLink({ active, onClick, children }: { active: boolean; onClick: () =
   );
 }
 
+/** Used only to pace the interpretation stepper — not a real agent wait. */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

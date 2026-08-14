@@ -61,6 +61,7 @@ async def run_agent(
     timeout_s: float = 8.0,
     json_mode: bool = False,
 ) -> AgentRun:
+    """Bounded tool-calling loop. Raises LLMUnavailableError so callers can fall back."""
     by_name = {tool.name: tool for tool in tools}
     schemas = [
         {

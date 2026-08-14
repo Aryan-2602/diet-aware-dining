@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * Results screen: OSM embed + ranked cards. Empty sets are not a generic
+ * "try broadening" message — they use `searchMeta` to say which constraint,
+ * radius, and candidate count produced zero verified matches. Allergies
+ * always get a banner: OSM cannot verify them.
+ */
 import { useState } from "react";
 import { useAppStore } from "@/store";
 import { RecommendationCard } from "./RecommendationCard";
@@ -7,6 +13,7 @@ import { Recommendation } from "@/types";
 
 type SortMode = "confidence" | "distance";
 
+/** Map + list for the current search; reads everything from the store. */
 export function ResultsMapView() {
   const recommendations = useAppStore((s) => s.recommendations);
   const mapData = useAppStore((s) => s.mapData);
@@ -221,6 +228,7 @@ export function ResultsMapView() {
   );
 }
 
+/** Client-side reorder only — ranking from the API is already by confidence. */
 function sortResults(recs: Recommendation[], mode: SortMode): Recommendation[] {
   const sorted = [...recs];
   switch (mode) {

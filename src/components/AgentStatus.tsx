@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * Unused. Superseded by InterpretationView. Not imported from page.tsx.
+ * Copy still mentions Yelp/Google/Reddit — the live pipeline uses OSM only.
+ */
 import { AgentName } from "@/types";
 
 interface AgentStatusProps {
@@ -51,6 +55,7 @@ const AGENT_ORDER: AgentName[] = [
   "recommendation",
 ];
 
+/** Legacy pipeline stepper — not wired into page.tsx. */
 export function AgentStatus({ currentAgent, status }: AgentStatusProps) {
   if (status === "idle" || status === "complete") return null;
 

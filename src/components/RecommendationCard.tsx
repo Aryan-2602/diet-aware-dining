@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * One verified restaurant. Evidence quotes are omitted when none exist —
+ * never fabricated. The OSM verify link uses `osmType`/`osmId`, not a
+ * name search, so it opens the exact mapped object.
+ */
 import { Recommendation } from "@/types";
 import { useAppStore } from "@/store";
 
@@ -8,6 +13,7 @@ interface RecommendationCardProps {
   rank: number;
 }
 
+/** Ranked card: OSM tags, evidence, Maps link. Opens details/evidence via the store. */
 export function RecommendationCard({
   recommendation,
   rank,

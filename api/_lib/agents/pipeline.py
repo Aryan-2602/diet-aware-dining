@@ -58,6 +58,8 @@ class PipelineState:
 
 
 class AgentPipeline:
+    """Coordinates one search from DietaryRequest to ranked recommendations."""
+
     def __init__(self) -> None:
         self._intent_agent = DietaryIntentAgent()
         self._clarification_agent = ClarificationAgent()
@@ -73,6 +75,11 @@ class AgentPipeline:
         self.error_code: Optional[str] = None
 
     async def run(self, request: DietaryRequest) -> list[Recommendation]:
+        """Run the pipeline from scratch.
+
+        HTTP ``/api/clarify`` also calls this, not ``resume_with_clarification``:
+        each request is a new process, so there is no in-memory pipeline to resume.
+        """
         try:
             self.state.status = "processing"
             self.state.request = request
@@ -111,6 +118,11 @@ class AgentPipeline:
     async def resume_with_clarification(
         self, answers: dict[str, str]
     ) -> list[Recommendation]:
+        """Apply clarification answers onto the in-memory intent and continue.
+
+        Kept for tests and a possible future sessionful runtime. The FastAPI
+        route rebuilds a DietaryRequest and calls ``run`` instead.
+        """
         if self.state.parsedIntent is None:
             raise RuntimeError("No pending intent to clarify")
 
@@ -133,6 +145,7 @@ class AgentPipeline:
         return await self._continue_after_clarification()
 
     async def _continue_after_clarification(self) -> list[Recommendation]:
+        """Discovery through export, once a geocodable location exists."""
         intent = self.state.parsedIntent
         assert intent is not None
 
@@ -193,6 +206,7 @@ class AgentPipeline:
         return recommendations
 
     async def export(self, fmt: ExportFormat) -> ExportResult:
+        """Re-export the last recommendations in a different format."""
         return await self._export_service.process(self.state.recommendations, fmt)
 
 

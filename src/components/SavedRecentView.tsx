@@ -1,7 +1,12 @@
 "use client";
 
+/**
+ * Persisted saves and recent queries. Opening a saved place only sets
+ * `selectedRestaurant` and switches to details — it does not re-run search.
+ */
 import { useAppStore } from "@/store";
 
+/** Saved restaurants and recent queries from localStorage. */
 export function SavedRecentView() {
   const recentSearches = useAppStore((s) => s.recentSearches);
   const savedRestaurants = useAppStore((s) => s.savedRestaurants);
@@ -10,6 +15,7 @@ export function SavedRecentView() {
   const unsaveRestaurant = useAppStore((s) => s.unsaveRestaurant);
   const clearRecentSearches = useAppStore((s) => s.clearRecentSearches);
 
+  /** Jump to details without calling `/api/recommend` again. */
   const handleViewDetails = (rec: typeof savedRestaurants[0]) => {
     setSelectedRestaurant(rec.recommendation);
     setPage("details");

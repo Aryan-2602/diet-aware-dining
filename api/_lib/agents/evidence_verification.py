@@ -30,6 +30,7 @@ class EvidenceVerificationAgent:
         enforceable_needs: list[str],
         unenforceable_needs: list[str],
     ) -> list[Evidence]:
+        """One Evidence item per OSM tag that answers a requested need."""
         evidence: list[Evidence] = []
 
         for restaurant in restaurants:

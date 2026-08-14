@@ -1,7 +1,12 @@
 "use client";
 
+/**
+ * Mobile bottom tabs. Hidden on `md+` (desktop uses the header in page.tsx).
+ * Active item is Zustand `currentPage`, not the URL.
+ */
 import { useAppStore } from "@/store";
 
+/** Fixed bottom nav for small screens. */
 export function Navigation() {
   const currentPage = useAppStore((s) => s.currentPage);
   const setPage = useAppStore((s) => s.setPage);

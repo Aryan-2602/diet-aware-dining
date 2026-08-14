@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 class ClarificationAgent:
     async def process(self, intent: ParsedIntent) -> list[ClarificationQuestion]:
+        """Ask only about gaps that change the search; templates if the LLM is down."""
         gaps = self._find_gaps(intent)
         if not gaps:
             return []
@@ -42,6 +43,7 @@ class ClarificationAgent:
     def resolve_location(
         self, intent: ParsedIntent, clarified_location: str
     ) -> ParsedIntent:
+        """Write the user's location answer onto intent and clear the ambiguous flag."""
         return ParsedIntent(
             dietaryNeeds=intent.dietaryNeeds,
             restrictions=intent.restrictions,

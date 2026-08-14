@@ -17,6 +17,7 @@ class MapService:
     async def process(
         self, restaurants: list[Restaurant], confidence_map: dict[str, float]
     ) -> MapData:
+        """Compute embed bounds, centre, zoom and marker URLs. Empty set defaults to LA."""
         if not restaurants:
             return MapData(
                 center=DEFAULT_CENTER,

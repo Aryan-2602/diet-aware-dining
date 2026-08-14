@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * Unused. Superseded by ResultsMapView (map + cards). Not imported from page.tsx.
+ * Empty-state copy is the old generic "try broadening" message.
+ */
 import { Recommendation } from "@/types";
 import { RecommendationCard } from "./RecommendationCard";
 
@@ -12,6 +16,7 @@ interface ResultsListProps {
   };
 }
 
+/** Legacy list-only results — not wired into page.tsx. */
 export function ResultsList({ recommendations, metadata }: ResultsListProps) {
   if (recommendations.length === 0) {
     return (

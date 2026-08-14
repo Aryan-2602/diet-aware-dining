@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * Natural-language search form. Quick-filter chips must be keys of the
+ * dietary vocabulary that map to OSM `diet:*` tags — a chip that cannot be
+ * filtered on would look "active" while changing nothing.
+ */
 import { useState } from "react";
 
 interface SearchFormProps {
@@ -35,6 +40,7 @@ const EXAMPLE_PROMPTS = [
   "Vegetarian Indian restaurants near Downtown Los Angeles",
 ];
 
+/** Collects query, location, OSM-mappable diet chips, and allergy labels. */
 export function SearchForm({ onSubmit, isLoading }: SearchFormProps) {
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("");

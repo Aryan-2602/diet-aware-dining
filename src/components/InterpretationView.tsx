@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * In-flight search animation. `currentAgent` is advanced by delays in
+ * `page.tsx`, not by streamed pipeline events — the API is one blocking POST.
+ * Meal type and price are not shown: neither is applied to the Overpass query.
+ */
 import { useAppStore } from "@/store";
 import { AgentName } from "@/types";
 
@@ -54,6 +59,7 @@ const AGENT_STEPS: {
   },
 ];
 
+/** Stepper UI; highlight is `currentAgent` from the parent, not live agent status. */
 export function InterpretationView({ currentAgent }: InterpretationViewProps) {
   const parsedIntent = useAppStore((s) => s.parsedIntent);
 

@@ -1,5 +1,10 @@
-// Core domain types based on the Trojans board workflow
+/**
+ * Shared domain types. Field names stay camelCase to match the Python API
+ * JSON contract — renaming them would silently break every component that
+ * reads a recommendation payload.
+ */
 
+/** What SearchForm POSTs to `/api/recommend`. */
 export interface DietaryRequest {
   query: string;
   location?: string;
@@ -8,6 +13,7 @@ export interface DietaryRequest {
   cuisinePreferences: string[];
 }
 
+/** Structured intent after DietaryIntentAgent. `restrictions` are allergies. */
 export interface ParsedIntent {
   dietaryNeeds: string[];
   restrictions: string[];
@@ -18,6 +24,7 @@ export interface ParsedIntent {
   priceRange?: "budget" | "moderate" | "premium" | "any";
 }
 
+/** Follow-up shown in ClarificationDialog. `field` is the answer key. */
 export interface ClarificationQuestion {
   field: string;
   question: string;
@@ -78,6 +85,7 @@ export interface ConfidenceScore {
   dataCompleteness: number;
 }
 
+/** One ranked result: the OSM place plus score, evidence, reasons, warnings. */
 export interface Recommendation {
   restaurant: Restaurant;
   confidence: ConfidenceScore;
@@ -114,6 +122,11 @@ export interface ExportResultData {
   filename: string;
 }
 
+/**
+ * Snapshot of one AgentPipeline run. The React app does not hold this object;
+ * it consumes the JSON fields the API copies out of it (`recommendations`,
+ * `mapData`, `parsedIntent`, `meta`).
+ */
 export interface PipelineState {
   status: AgentStatus;
   currentAgent: AgentName | null;
@@ -136,6 +149,7 @@ export type AgentStatus =
   | "complete"
   | "error";
 
+/** Step ids for InterpretationView. Some names are historical (e.g. `trust_confidence` is now the deterministic scorer). */
 export type AgentName =
   | "dietary_intent"
   | "clarification"

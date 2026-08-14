@@ -1,7 +1,13 @@
 "use client";
 
+/**
+ * Per-restaurant evidence breakdown. Also requires `selectedRestaurant`.
+ * Score chips map 1:1 to `ConfidenceScore` fields (dietTagStrength,
+ * coverage, tagRecency, dataCompleteness) — not a separate scoring UI.
+ */
 import { useAppStore } from "@/store";
 
+/** Evidence + confidence breakdown for `selectedRestaurant`. */
 export function EvidenceView() {
   const selectedRestaurant = useAppStore((s) => s.selectedRestaurant);
   const setPage = useAppStore((s) => s.setPage);
@@ -66,6 +72,7 @@ export function EvidenceView() {
               Based on {evidence.length} facts recorded by OpenStreetMap
               contributors
             </p>
+            {/* These four percentages are the ConfidenceScore fields, not a new formula. */}
             <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
               <div className="flex items-center gap-1">
                 <div className="w-2 h-2 rounded-full bg-primary-500" />

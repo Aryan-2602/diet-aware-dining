@@ -77,6 +77,7 @@ LOCATION_PATTERNS = [
 
 class DietaryIntentAgent:
     async def process(self, request: DietaryRequest) -> ParsedIntent:
+        """Parse free text into ParsedIntent; keyword/regex fallback if the LLM is down."""
         try:
             return await self._process_with_llm(request)
         except LLMUnavailableError as error:
@@ -106,6 +107,7 @@ class DietaryIntentAgent:
     # -- LLM path ----------------------------------------------------------
 
     async def _process_with_llm(self, request: DietaryRequest) -> ParsedIntent:
+        """Ask the model for JSON intent; raises LLMUnavailableError on any failure."""
         vocabulary = list(DIETARY_KEYWORDS.keys())
 
         system = "\n".join(
@@ -210,6 +212,7 @@ class DietaryIntentAgent:
     # -- deterministic fallback -------------------------------------------
 
     def _process_with_rules(self, request: DietaryRequest) -> ParsedIntent:
+        """Keyword/regex parser used when the LLM is unavailable."""
         query = request.query.lower()
         location, ambiguous = self._extract_location_rule_based(query, request)
         return ParsedIntent(

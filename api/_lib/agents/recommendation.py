@@ -41,6 +41,7 @@ class RecommendationAgent:
         enforceable_needs: list[str],
         unenforceable_needs: list[str],
     ) -> list[Recommendation]:
+        """Hard-filter on diet tags, rank by score, then write match/warning copy."""
         safe = [
             r for r in restaurants if matches_all_needs(r.dietTags, enforceable_needs)
         ]

@@ -1,7 +1,12 @@
 "use client";
 
+/**
+ * Marketing landing. CTAs call `setPage("search")` / `setPage("saved")` —
+ * still the same Next.js route.
+ */
 import { useAppStore } from "@/store";
 
+/** Hero, how-it-works, and trust sections; navigates via `setPage`. */
 export function LandingPage() {
   const setPage = useAppStore((s) => s.setPage);
 
