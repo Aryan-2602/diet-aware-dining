@@ -18,6 +18,7 @@ useful results rather than emptying them.
 
 from __future__ import annotations
 
+import asyncio
 import math
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -34,10 +35,10 @@ OVERPASS_MIRRORS = (
     "https://overpass.kumi.systems/api/interpreter",
 )
 
-# Kept tight deliberately: the mirrors are tried in sequence, so this bounds the
-# worst case at roughly 2x. Overpass answers a diet-filtered query in well under
-# a second when healthy; a slow response means it is saturated, and failing over
-# to the next mirror beats waiting.
+# Kept tight deliberately: the mirrors are raced, so this bounds a whole round
+# rather than one attempt in a chain. Overpass answers a diet-filtered query in
+# a few seconds when healthy; a slow response means it is saturated, and the
+# other mirror is the better bet.
 TIMEOUT_S = 12.0
 SERVER_TIMEOUT_S = 12
 MAX_ELEMENTS = 200
@@ -131,13 +132,38 @@ async def search_restaurants(
 
 
 async def _fetch_with_mirrors(query: str) -> dict[str, Any]:
+    """Races the mirrors and takes the first success.
+
+    Trying them in sequence cost the *sum* of both timeouts whenever the first
+    was saturated, and the mirrors saturate independently and unpredictably:
+    measured across one radius ladder, overpass-api.de answered the 2 km query
+    in 2.5s then 504'd on 5 km, while kumi.systems did the reverse. Sequencing
+    them meant a healthy mirror sat idle behind a dead one for 12s, and two
+    rungs of that put a single search past the 60s function limit.
+
+    Racing bounds a round at one timeout instead of two and picks whichever
+    mirror is healthy at this moment. A mirror that fails fast does not end the
+    round -- the loop keeps waiting on the others, and only a clean sweep raises.
+    """
+    tasks = [
+        asyncio.create_task(_fetch_overpass(url, query))
+        for url in OVERPASS_MIRRORS
+    ]
     last_error: Optional[DiscoveryError] = None
-    for url in OVERPASS_MIRRORS:
-        try:
-            return await _fetch_overpass(url, query)
-        except DiscoveryError as error:
-            last_error = error
-            continue
+    try:
+        for completed in asyncio.as_completed(tasks):
+            try:
+                return await completed
+            except DiscoveryError as error:
+                last_error = error
+    finally:
+        # The losers are cancelled and reaped, so a slow mirror cannot outlive
+        # the request or surface as a never-retrieved task exception.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     raise last_error or DiscoveryError(
         "overpass_unavailable", "No Overpass mirror responded"
     )

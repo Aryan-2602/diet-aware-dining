@@ -8,9 +8,12 @@ after parsing.
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from typing import Optional
 
+from ..errors import DiscoveryError
 from ..tools.diet_tags import (
     cuisine_matches,
     extract_diet_tags,
@@ -30,6 +33,14 @@ from ..types import Coordinates, ParsedIntent, Restaurant
 RADIUS_LADDER_M = (2000, 5000, 10_000, 25_000)
 MIN_RESULTS = 3
 MAX_RESULTS = 15
+
+# The whole ladder has to fit inside the 60s function limit with the geocode,
+# the LLM intent call and scoring alongside it. Each rung is bounded by the
+# Overpass client timeout, so stopping before a rung that cannot finish keeps
+# the worst case at roughly this budget plus one rung.
+SEARCH_BUDGET_S = 40.0
+
+logger = logging.getLogger(__name__)
 
 DIET_TAG_LABELS = {
     "diet:vegan": "vegan",
@@ -93,24 +104,64 @@ class RestaurantDiscoveryAgent:
         sequence of requests and returns the same restaurants. The diet filter
         is what makes this affordable -- it cuts a city radius from hundreds of
         places to tens, so the widest step is still a small response.
+
+        A rung that fails does not end the search. Overpass saturates per-query,
+        not per-session, so a 504 on the 5 km rung says nothing about the 10 km
+        one -- "halal near Santa Monica" measured as 0 results at 2 km, both
+        mirrors 504 at 5 km, then 5 results at 10 km. Aborting on the middle
+        rung reported an outage for a search whose answer was one rung away.
         """
         places: list[OverpassPlace] = []
         radius_searched = RADIUS_LADDER_M[0]
+        last_error: Optional[DiscoveryError] = None
+        deadline = time.monotonic() + SEARCH_BUDGET_S
 
         for radius_m in RADIUS_LADDER_M:
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "[Discovery] search budget spent, stopping before the %dm rung",
+                    radius_m,
+                )
+                break
+
+            try:
+                found = await search_restaurants(
+                    lat=geocoded.lat,
+                    lng=geocoded.lng,
+                    radius_m=radius_m,
+                    diet_needs=enforceable_needs,
+                    cuisine_type=intent.cuisineType,
+                )
+            except DiscoveryError as error:
+                # Held rather than raised: a wider rung may still answer, and if
+                # none does the decision below distinguishes "nothing matched"
+                # from "the search never completed".
+                last_error = error
+                logger.warning(
+                    "[Discovery] %dm rung failed (%s), widening: %s",
+                    radius_m,
+                    error.code,
+                    error.message,
+                )
+                continue
+
+            places = found
             radius_searched = radius_m
-            places = await search_restaurants(
-                lat=geocoded.lat,
-                lng=geocoded.lng,
-                radius_m=radius_m,
-                diet_needs=enforceable_needs,
-                cuisine_type=intent.cuisineType,
-            )
             usable = [
                 p for p in places if matches_all_needs(p.tags, enforceable_needs)
             ]
             if len(usable) >= MIN_RESULTS:
                 break
+
+        # Degrading to a partial answer is only honest while there is something
+        # to show. With nothing to show and a rung that never completed, the
+        # search did not establish an absence -- reporting "no restaurants
+        # found" would be the outage-as-empty-result bug this codebase exists
+        # to avoid.
+        if last_error is not None and not any(
+            matches_all_needs(p.tags, enforceable_needs) for p in places
+        ):
+            raise last_error
 
         return places, radius_searched
 

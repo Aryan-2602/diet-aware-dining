@@ -10,20 +10,27 @@ assertion. Run with ``pytest``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import pathlib
 import sys
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from api._lib.agents import discovery  # noqa: E402
+from api._lib.agents.discovery import RestaurantDiscoveryAgent  # noqa: E402
 from api._lib.confidence_scorer import (  # noqa: E402
     completeness_score,
     recency_score,
     score_restaurant,
 )
+from api._lib.errors import DiscoveryError  # noqa: E402
+from api._lib.tools import overpass  # noqa: E402
+from api._lib.tools.geocode import GeocodeResult  # noqa: E402
 from api._lib.tools.diet_tags import (  # noqa: E402
     cuisine_filter,
     cuisine_matches,
@@ -33,10 +40,11 @@ from api._lib.tools.diet_tags import (  # noqa: E402
     partition_needs,
 )
 from api._lib.tools.overpass import (  # noqa: E402
+    OverpassPlace,
     build_overpass_query,
     diet_filter_combinations,
 )
-from api._lib.types import Coordinates, Restaurant  # noqa: E402
+from api._lib.types import Coordinates, ParsedIntent, Restaurant  # noqa: E402
 
 FIXTURE = (
     pathlib.Path(__file__).resolve().parents[1]
@@ -334,3 +342,163 @@ def test_end_to_end_ordering_is_identical_across_runs():
 def test_recent_only_outranks_stale_yes():
     ranked = [r.name for r, _ in from_fixture(["vegan"])]
     assert ranked.index("Askatu") < ranked.index("Building-Mapped Vegan Kitchen")
+
+
+# --- Radius ladder resilience --------------------------------------------
+#
+# Overpass saturates per-query, so one rung failing says nothing about the next.
+# These pin the three outcomes apart: widen past a failure, degrade to a partial
+# answer, and refuse to report an outage as an empty result set.
+
+
+def ladder_run(rungs, on_rung=None):
+    """Drives the ladder with ``rungs`` mapping radius -> places or an error."""
+    agent = RestaurantDiscoveryAgent()
+    intent = ParsedIntent(
+        dietaryNeeds=["halal"],
+        restrictions=[],
+        location="Santa Monica",
+        isLocationAmbiguous=False,
+        cuisineType="burger",
+    )
+    geocoded = GeocodeResult(lat=34.0, lng=-118.5, displayName="Santa Monica")
+    calls: list[int] = []
+
+    async def fake_search(*, lat, lng, radius_m, diet_needs, cuisine_type):
+        calls.append(radius_m)
+        if on_rung is not None:
+            on_rung(radius_m)
+        outcome = rungs[radius_m]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    with mock.patch.object(discovery, "search_restaurants", fake_search):
+        places, searched = asyncio.run(
+            agent._search_with_ladder(intent, geocoded, ["halal"])
+        )
+    return places, searched, calls
+
+
+def halal_place(osm_id: int) -> OverpassPlace:
+    return OverpassPlace(
+        osmType="node",
+        osmId=osm_id,
+        lat=34.0,
+        lng=-118.5,
+        tags={"name": f"Halal {osm_id}", "diet:halal": "yes"},
+    )
+
+
+def test_failed_rung_does_not_end_the_search():
+    """The reported bug: 0 at 2km, both mirrors 504 at 5km, 5 results at 10km."""
+    timeout = DiscoveryError("overpass_timeout", "Overpass timed out after 12.0s")
+    places, searched, calls = ladder_run(
+        {
+            2000: [],
+            5000: timeout,
+            10_000: [halal_place(i) for i in range(5)],
+            25_000: [],
+        }
+    )
+    assert [p.osmId for p in places] == [0, 1, 2, 3, 4]
+    assert searched == 10_000
+    assert calls == [2000, 5000, 10_000]
+
+
+def test_partial_results_survive_a_later_failure():
+    """Enough at 2km but under MIN_RESULTS, then an outage: show what we have."""
+    places, searched, _ = ladder_run(
+        {
+            2000: [halal_place(1)],
+            5000: DiscoveryError("overpass_unavailable", "Overpass returned 504"),
+            10_000: DiscoveryError("overpass_unavailable", "Overpass returned 504"),
+            25_000: DiscoveryError("overpass_unavailable", "Overpass returned 504"),
+        }
+    )
+    assert [p.osmId for p in places] == [1]
+    assert searched == 2000
+
+
+def test_outage_with_nothing_to_show_is_not_reported_as_empty():
+    """A search that never completed must not read as an established absence."""
+    with pytest.raises(DiscoveryError) as caught:
+        ladder_run(
+            {
+                2000: [],
+                5000: DiscoveryError("overpass_timeout", "timed out"),
+                10_000: DiscoveryError("overpass_timeout", "timed out"),
+                25_000: DiscoveryError("overpass_timeout", "timed out"),
+            }
+        )
+    assert caught.value.code == "overpass_timeout"
+
+
+def test_genuinely_empty_search_still_reports_empty():
+    """Every rung answered and none matched -- that is a real zero, not an error."""
+    places, searched, calls = ladder_run(
+        {2000: [], 5000: [], 10_000: [], 25_000: []}
+    )
+    assert places == []
+    assert searched == 25_000
+    assert calls == [2000, 5000, 10_000, 25_000]
+
+
+def test_ladder_stops_when_the_time_budget_is_spent():
+    """Four rungs x one timeout each would otherwise outlive the function limit."""
+    elapsed = 0.0
+
+    def spend(_radius):
+        # Each rung burns most of the budget, so the third cannot start.
+        nonlocal elapsed
+        elapsed += discovery.SEARCH_BUDGET_S * 0.6
+
+    # Only the name `time` inside discovery is swapped -- patching the real
+    # time.monotonic would also drive asyncio's event loop clock.
+    clock = mock.Mock(monotonic=lambda: elapsed)
+    with mock.patch.object(discovery, "time", clock):
+        places, _, calls = ladder_run(
+            {2000: [], 5000: [halal_place(1)], 10_000: [], 25_000: []},
+            on_rung=spend,
+        )
+    assert calls == [2000, 5000]
+    assert [p.osmId for p in places] == [1]
+
+
+# --- Overpass mirror racing ----------------------------------------------
+
+
+def test_race_takes_the_first_mirror_to_answer():
+    async def fetch(url, query):
+        if "kumi" in url:
+            return {"elements": [{"id": 1}]}
+        await asyncio.sleep(0.2)
+        return {"elements": [{"id": 2}]}
+
+    with mock.patch.object(overpass, "_fetch_overpass", fetch):
+        payload = asyncio.run(overpass._fetch_with_mirrors("q"))
+    assert payload["elements"] == [{"id": 1}]
+
+
+def test_race_waits_out_a_mirror_that_fails_fast():
+    """A quick 504 from one mirror must not pre-empt a healthy slower one."""
+
+    async def fetch(url, query):
+        if "kumi" in url:
+            raise DiscoveryError("overpass_unavailable", "Overpass returned 504")
+        await asyncio.sleep(0.05)
+        return {"elements": [{"id": 7}]}
+
+    with mock.patch.object(overpass, "_fetch_overpass", fetch):
+        payload = asyncio.run(overpass._fetch_with_mirrors("q"))
+    assert payload["elements"] == [{"id": 7}]
+
+
+def test_race_raises_only_when_every_mirror_fails():
+    async def fetch(url, query):
+        raise DiscoveryError("overpass_timeout", "Overpass timed out after 12.0s")
+
+    with mock.patch.object(overpass, "_fetch_overpass", fetch):
+        with pytest.raises(DiscoveryError) as caught:
+            asyncio.run(overpass._fetch_with_mirrors("q"))
+    assert caught.value.code == "overpass_timeout"
