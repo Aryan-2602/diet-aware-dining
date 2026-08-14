@@ -1,165 +1,261 @@
-import { ParsedIntent, Restaurant, DataSource } from "@/types";
+import { ParsedIntent, Restaurant } from "@/types";
+import { runAgent, type AgentTool } from "@/lib/agent";
+import { LLMUnavailableError } from "@/lib/llm-client";
+import { geocode, type GeocodeResult } from "@/lib/tools/geocode";
+import {
+  distanceMeters,
+  searchRestaurants,
+  type OverpassPlace,
+} from "@/lib/tools/overpass";
+import {
+  cuisineMatches,
+  extractDietTags,
+  matchesAllNeeds,
+  partitionNeeds,
+} from "@/lib/tools/diet-tags";
 
 /**
  * Restaurant Discovery Agent
- * Queries OpenStreetMap Overpass API to find real restaurants
- * matching the user's dietary intent and location.
- * Falls back to Nominatim for geocoding location strings.
+ *
+ * An LLM agent over two deterministic tools. It chooses the search strategy —
+ * how wide to go, whether a cuisine preference is worth insisting on, when to
+ * stop — while the dietary constraint is enforced inside the tools and
+ * re-asserted here in code. Strategy is a judgement call; dietary safety is not.
+ *
+ * Falls back to a fixed strategy when the LLM is unavailable, so the app keeps
+ * working with no API key.
  */
+
+const DEFAULT_RADIUS_M = 8000;
+const MAX_RADIUS_M = 25_000;
+const MIN_RESULTS = 3;
+const MAX_RESULTS = 15;
+
+export interface DiscoveryOutcome {
+  restaurants: Restaurant[];
+  /** Needs OSM could not express, so could not be filtered on. */
+  unenforceableNeeds: string[];
+  enforceableNeeds: string[];
+  /** Tightest radius that yielded at least MIN_RESULTS, else the widest tried. */
+  effectiveRadiusM: number;
+  radiusSearchedM: number;
+  candidatesScanned: number;
+  geocoded: GeocodeResult;
+}
+
 export class RestaurantDiscoveryAgent {
-  private readonly MIN_RESULTS = 3;
-  private maxRelaxations = 2;
-  private readonly OVERPASS_URL = "https://overpass-api.de/api/interpreter";
-  private readonly NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+  async process(intent: ParsedIntent): Promise<DiscoveryOutcome> {
+    // Geocoding happens exactly once, before any strategy is chosen. The old
+    // implementation re-geocoded inside its relaxation recursion, issuing three
+    // requests per search against a 1-req/s service.
+    const geocoded = await geocode(intent.location);
+    const { enforceable, unenforceable } = partitionNeeds(intent.dietaryNeeds);
 
-  async process(
-    intent: ParsedIntent,
-    relaxationLevel: number = 0
-  ): Promise<Restaurant[]> {
-    // Geocode the location first
-    const coords = await this.geocodeLocation(intent.location);
-    if (!coords) {
-      // If geocoding fails, return empty — clarification agent should ask
-      return [];
-    }
-
-    // Calculate search radius based on relaxation level
-    const radius = 2000 + relaxationLevel * 2000; // 2km, 4km, 6km
-
-    // Query Overpass API for restaurants
-    const results = await this.queryOverpass(intent, coords, radius);
-
-    // If too few results and we haven't relaxed too much, expand search
-    if (results.length < this.MIN_RESULTS && relaxationLevel < this.maxRelaxations) {
-      return this.process(intent, relaxationLevel + 1);
-    }
-
-    return results;
-  }
-
-  needsMoreResults(restaurants: Restaurant[]): boolean {
-    return restaurants.length < this.MIN_RESULTS;
-  }
-
-  private async geocodeLocation(
-    location: string
-  ): Promise<{ lat: number; lng: number } | null> {
-    if (!location) return null;
+    let places: OverpassPlace[];
+    let radiusSearchedM = DEFAULT_RADIUS_M;
 
     try {
-      const params = new URLSearchParams({
-        q: location,
-        format: "json",
-        limit: "1",
-      });
-
-      const response = await fetch(`${this.NOMINATIM_URL}?${params}`, {
-        headers: {
-          "User-Agent": "DietAwareDining/1.0",
-        },
-      });
-
-      if (!response.ok) return null;
-
-      const data = await response.json();
-      if (data.length === 0) return null;
-
-      return {
-        lat: parseFloat(data[0].lat),
-        lng: parseFloat(data[0].lon),
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  private async queryOverpass(
-    intent: ParsedIntent,
-    coords: { lat: number; lng: number },
-    radius: number
-  ): Promise<Restaurant[]> {
-    // Build dietary filter tags for Overpass
-    const dietFilters = this.buildDietaryFilters(intent.dietaryNeeds);
-    const cuisineFilter = intent.cuisineType
-      ? `["cuisine"~"${intent.cuisineType}",i]`
-      : "";
-
-    // Query restaurants and cafes within radius
-    const query = `
-      [out:json][timeout:15];
-      (
-        node["amenity"="restaurant"]${cuisineFilter}(around:${radius},${coords.lat},${coords.lng});
-        node["amenity"="cafe"]${cuisineFilter}(around:${radius},${coords.lat},${coords.lng});
-        way["amenity"="restaurant"]${cuisineFilter}(around:${radius},${coords.lat},${coords.lng});
-        way["amenity"="cafe"]${cuisineFilter}(around:${radius},${coords.lat},${coords.lng});
+      const planned = await this.planWithLLM(intent, geocoded, enforceable);
+      places = planned.places;
+      radiusSearchedM = planned.radiusM;
+    } catch (error) {
+      if (!(error instanceof LLMUnavailableError)) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[RestaurantDiscoveryAgent] planning unavailable, using default strategy: ${message}`
       );
-      out center 30;
-    `;
-
-    try {
-      const url = `${this.OVERPASS_URL}?data=${encodeURIComponent(query)}`;
-      const response = await fetch(url, {
-        headers: {
-          "Accept": "application/json",
-          "User-Agent": "DietAwareDining/1.0",
-        },
+      places = await searchRestaurants({
+        lat: geocoded.lat,
+        lng: geocoded.lng,
+        radiusM: DEFAULT_RADIUS_M,
+        dietNeeds: enforceable,
+        cuisineType: intent.cuisineType,
       });
-
-      if (!response.ok) return [];
-
-      const data = await response.json();
-      const restaurants = this.parseOverpassResults(data.elements, intent, coords);
-
-      return restaurants;
-    } catch {
-      return [];
     }
+
+    const candidatesScanned = places.length;
+    const restaurants = this.toRestaurants(places, intent, enforceable, geocoded);
+
+    return {
+      restaurants: restaurants.slice(0, MAX_RESULTS),
+      unenforceableNeeds: unenforceable,
+      enforceableNeeds: enforceable,
+      effectiveRadiusM: this.tightestUsefulRadius(restaurants, radiusSearchedM),
+      radiusSearchedM,
+      candidatesScanned,
+      geocoded,
+    };
   }
 
-  private parseOverpassResults(
-    elements: OverpassElement[],
+  /**
+   * Lets the agent pick a radius and decide whether to widen. The diet
+   * constraint is passed to the tool by us, not chosen by the model — the model
+   * is never given the option to drop it.
+   */
+  private async planWithLLM(
     intent: ParsedIntent,
-    searchCenter: { lat: number; lng: number }
-  ): Restaurant[] {
-    if (!elements || elements.length === 0) return [];
+    geocoded: GeocodeResult,
+    enforceableNeeds: string[]
+  ): Promise<{ places: OverpassPlace[]; radiusM: number }> {
+    let lastPlaces: OverpassPlace[] = [];
+    let lastRadius = DEFAULT_RADIUS_M;
 
-    return elements
-      .filter((el) => el.tags?.name) // Must have a name
-      .map((el, index) => {
-        const lat = el.lat ?? el.center?.lat ?? 0;
-        const lng = el.lon ?? el.center?.lon ?? 0;
-        const tags = el.tags || {};
+    const searchTool: AgentTool<{ radiusM?: number }, unknown> = {
+      name: "search_restaurants",
+      description:
+        "Search OpenStreetMap for restaurants near the user's location. The " +
+        "dietary requirement is always applied and cannot be disabled. Returns " +
+        "how many matches were found at that radius.",
+      parameters: {
+        type: "object",
+        properties: {
+          radiusM: {
+            type: "number",
+            description: `Search radius in metres, ${1000}-${MAX_RADIUS_M}.`,
+          },
+        },
+        required: ["radiusM"],
+      },
+      execute: async ({ radiusM }) => {
+        const radius = Math.min(
+          Math.max(Number(radiusM) || DEFAULT_RADIUS_M, 1000),
+          MAX_RADIUS_M
+        );
+        const places = await searchRestaurants({
+          lat: geocoded.lat,
+          lng: geocoded.lng,
+          radiusM: radius,
+          dietNeeds: enforceableNeeds,
+          cuisineType: intent.cuisineType,
+        });
+        lastPlaces = places;
+        lastRadius = radius;
 
-        const dietaryOptions = this.extractDietaryOptions(tags);
-        const cuisine = this.extractCuisine(tags);
-        const source = this.determineSource(tags);
+        const cuisineHits = intent.cuisineType
+          ? places.filter((p) =>
+              cuisineMatches(
+                (p.tags.cuisine ?? "").split(";"),
+                intent.cuisineType
+              )
+            ).length
+          : null;
 
         return {
-          id: `osm-${el.id}`,
-          name: tags.name || "Unknown",
-          address: this.buildAddress(tags),
-          cuisine,
-          rating: this.estimateRating(tags),
-          priceLevel: this.estimatePriceLevel(tags),
-          dietaryOptions,
-          location: { lat, lng },
-          source,
-          reviewCount: this.estimatePopularity(tags),
-          distance: this.calculateDistance(searchCenter, { lat, lng }),
+          radiusM: radius,
+          matches: places.length,
+          matchingRequestedCuisine: cuisineHits,
         };
+      },
+    };
+
+    const system = [
+      "You plan a restaurant search over OpenStreetMap.",
+      "Call search_restaurants to find places, then reply with a one-sentence",
+      "summary of what you searched. Reply with text only once you are done.",
+      "",
+      "Guidance:",
+      `- Start around ${DEFAULT_RADIUS_M} metres.`,
+      `- If there are fewer than ${MIN_RESULTS} matches, widen once (up to ${MAX_RADIUS_M} metres).`,
+      "- If a wider search still finds nothing, stop. Reporting an honest empty",
+      "  result is correct; there is no way to loosen the dietary requirement.",
+      "- Do not widen when you already have enough matches; nearer is better.",
+      "- Never call the tool more than three times.",
+    ].join("\n");
+
+    const user = [
+      `Location: ${geocoded.displayName}`,
+      `Dietary requirements enforced: ${
+        enforceableNeeds.length ? enforceableNeeds.join(", ") : "none"
+      }`,
+      `Preferred cuisine: ${intent.cuisineType ?? "no preference"}`,
+      `Original request: ${intent.location}`,
+    ].join("\n");
+
+    await runAgent({
+      system,
+      user,
+      tools: [searchTool as AgentTool<never, unknown>],
+      maxIterations: 4,
+      maxTokens: 300,
+    });
+
+    // If the agent finished without ever searching, that is a planning failure,
+    // not an empty result — fall back rather than reporting zero matches.
+    if (!lastPlaces.length && lastRadius === DEFAULT_RADIUS_M) {
+      const places = await searchRestaurants({
+        lat: geocoded.lat,
+        lng: geocoded.lng,
+        radiusM: DEFAULT_RADIUS_M,
+        dietNeeds: enforceableNeeds,
+        cuisineType: intent.cuisineType,
+      });
+      return { places, radiusM: DEFAULT_RADIUS_M };
+    }
+
+    return { places: lastPlaces, radiusM: lastRadius };
+  }
+
+  /**
+   * Maps Overpass elements to Restaurants and re-asserts the dietary filter in
+   * code. Defence in depth: the query already filtered, but a stale mirror, a
+   * future edit to the query builder, or `out` truncation must not be able to
+   * put an unverified place in front of someone with a dietary requirement.
+   */
+  private toRestaurants(
+    places: OverpassPlace[],
+    intent: ParsedIntent,
+    enforceableNeeds: string[],
+    center: GeocodeResult
+  ): Restaurant[] {
+    return places
+      .filter((place) => matchesAllNeeds(place.tags, enforceableNeeds))
+      .map((place) => {
+        const tags = place.tags;
+        return {
+          // node and way ids occupy separate namespaces and collide without
+          // the type prefix, which previously cross-contaminated evidence.
+          id: `osm-${place.osmType}-${place.osmId}`,
+          name: tags.name,
+          address: this.buildAddress(tags),
+          cuisine: this.extractCuisine(tags),
+          dietaryOptions: this.extractDietaryOptions(tags),
+          dietTags: extractDietTags(tags),
+          location: { lat: place.lat, lng: place.lng },
+          osmType: place.osmType,
+          osmId: place.osmId,
+          distance: distanceMeters(center, { lat: place.lat, lng: place.lng }),
+          openingHours: tags.opening_hours,
+          website: tags.website ?? tags["contact:website"],
+          phone: tags.phone ?? tags["contact:phone"],
+          lastCheckedISO: this.extractCheckDate(tags, enforceableNeeds),
+        } satisfies Restaurant;
       })
-      .filter((r) => {
-        // If user has dietary needs, prefer restaurants that match
-        if (intent.dietaryNeeds.length === 0) return true;
-        // Keep all results but they'll be ranked by confidence later
-        return true;
-      })
-      .sort((a, b) => (a.distance ?? 999) - (b.distance ?? 999))
-      .slice(0, 15); // Limit to top 15 nearest
+      .sort((a, b) => {
+        // Requested cuisine first (it is a preference, not a constraint), then
+        // distance. Deterministic: no random component anywhere.
+        const aCuisine = cuisineMatches(a.cuisine, intent.cuisineType) ? 0 : 1;
+        const bCuisine = cuisineMatches(b.cuisine, intent.cuisineType) ? 0 : 1;
+        if (aCuisine !== bCuisine) return aCuisine - bCuisine;
+        return (a.distance ?? Infinity) - (b.distance ?? Infinity);
+      });
+  }
+
+  /** Prefers a need-specific check date over the listing-wide one. */
+  private extractCheckDate(
+    tags: Record<string, string>,
+    enforceableNeeds: string[]
+  ): string | undefined {
+    for (const need of enforceableNeeds) {
+      for (const key of Object.keys(tags)) {
+        if (key.startsWith("check_date:diet:") && tags[key]) {
+          return tags[key];
+        }
+      }
+    }
+    return tags.check_date ?? tags["survey:date"] ?? undefined;
   }
 
   private extractDietaryOptions(tags: Record<string, string>): string[] {
-    const options: string[] = [];
     const dietMap: Record<string, string> = {
       "diet:vegan": "vegan",
       "diet:vegetarian": "vegetarian",
@@ -168,25 +264,20 @@ export class RestaurantDiscoveryAgent {
       "diet:halal": "halal",
       "diet:kosher": "kosher",
     };
-
+    const options: string[] = [];
     for (const [tag, label] of Object.entries(dietMap)) {
-      if (tags[tag] === "yes" || tags[tag] === "only") {
-        options.push(label);
-      }
+      if (tags[tag] === "yes" || tags[tag] === "only") options.push(label);
     }
-
-    // Also check cuisine for hints
-    const cuisine = (tags.cuisine || "").toLowerCase();
-    if (cuisine.includes("vegan") && !options.includes("vegan")) options.push("vegan");
-    if (cuisine.includes("vegetarian") && !options.includes("vegetarian")) options.push("vegetarian");
-
     return options;
   }
 
   private extractCuisine(tags: Record<string, string>): string[] {
     const raw = tags.cuisine || tags.food || "";
     if (!raw) return [tags.amenity === "cafe" ? "cafe" : "restaurant"];
-    return raw.split(";").map((c) => c.trim().toLowerCase()).filter(Boolean);
+    return raw
+      .split(";")
+      .map((c) => c.trim().toLowerCase())
+      .filter(Boolean);
   }
 
   private buildAddress(tags: Record<string, string>): string {
@@ -196,76 +287,19 @@ export class RestaurantDiscoveryAgent {
       tags["addr:city"],
       tags["addr:postcode"],
     ].filter(Boolean);
-    return parts.length > 0 ? parts.join(", ") : tags.name || "Address unavailable";
+    return parts.length > 0 ? parts.join(", ") : "Address not in OpenStreetMap";
   }
 
-  private estimateRating(tags: Record<string, string>): number {
-    // OSM doesn't have ratings — estimate based on data richness
-    let score = 3.5;
-    if (tags.website || tags["contact:website"]) score += 0.3;
-    if (tags.phone || tags["contact:phone"]) score += 0.2;
-    if (tags.opening_hours) score += 0.3;
-    if (tags.cuisine) score += 0.2;
-    return Math.min(5, Math.round(score * 10) / 10);
-  }
-
-  private estimatePriceLevel(tags: Record<string, string>): number {
-    // Use OSM tags to estimate price
-    if (tags["price:range"] === "budget" || tags.amenity === "fast_food") return 1;
-    if (tags["price:range"] === "expensive" || tags.stars) return 3;
-    return 2; // Default moderate
-  }
-
-  private estimatePopularity(tags: Record<string, string>): number {
-    // Estimate based on data completeness (more tags = more popular/known)
-    let count = Object.keys(tags).length * 5;
-    if (tags.website) count += 50;
-    if (tags.opening_hours) count += 30;
-    if (tags.wheelchair) count += 20;
-    return Math.max(10, Math.min(500, count));
-  }
-
-  private determineSource(tags: Record<string, string>): DataSource {
-    // All data comes from OSM/Overpass, but label based on verification level
-    if (tags.website && tags.opening_hours && tags.phone) return "google_reviews";
-    if (tags.website || tags.opening_hours) return "yelp";
-    return "reddit";
-  }
-
-  private calculateDistance(
-    from: { lat: number; lng: number },
-    to: { lat: number; lng: number }
+  /** The tightest radius that still contains MIN_RESULTS, for honest reporting. */
+  private tightestUsefulRadius(
+    restaurants: Restaurant[],
+    searchedM: number
   ): number {
-    const R = 6371000; // Earth radius in meters
-    const dLat = ((to.lat - from.lat) * Math.PI) / 180;
-    const dLon = ((to.lng - from.lng) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos((from.lat * Math.PI) / 180) *
-        Math.cos((to.lat * Math.PI) / 180) *
-        Math.sin(dLon / 2) ** 2;
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return Math.round(R * c);
+    for (const radius of [1000, 2000, 5000, 10_000, MAX_RADIUS_M]) {
+      if (radius > searchedM) break;
+      const within = restaurants.filter((r) => (r.distance ?? Infinity) <= radius);
+      if (within.length >= MIN_RESULTS) return radius;
+    }
+    return searchedM;
   }
-
-  private buildDietaryFilters(needs: string[]): string {
-    // Not used directly in query (would over-filter), but kept for future
-    const tagMap: Record<string, string> = {
-      vegan: '["diet:vegan"="yes"]',
-      vegetarian: '["diet:vegetarian"="yes"]',
-      "gluten-free": '["diet:gluten_free"="yes"]',
-      halal: '["diet:halal"="yes"]',
-      kosher: '["diet:kosher"="yes"]',
-    };
-    return needs.map((n) => tagMap[n] || "").join("");
-  }
-}
-
-interface OverpassElement {
-  type: string;
-  id: number;
-  lat?: number;
-  lon?: number;
-  center?: { lat: number; lon: number };
-  tags?: Record<string, string>;
 }

@@ -24,30 +24,43 @@ export interface ClarificationQuestion {
   options?: string[];
 }
 
+/**
+ * Every field here comes from OpenStreetMap. There is deliberately no `rating`,
+ * `reviewCount`, `priceLevel` or `source`: OSM has none of those, and the
+ * previous version synthesized them from how many tags a place happened to
+ * have, then displayed the result as if it came from Google or Yelp.
+ */
 export interface Restaurant {
   id: string;
   name: string;
   address: string;
   cuisine: string[];
-  rating: number;
-  priceLevel: number;
+  /** Vocabulary needs this place positively satisfies. */
   dietaryOptions: string[];
+  /** Raw `diet:*` tags, so evidence can quote the source verbatim. */
+  dietTags: Record<string, string>;
   location: {
     lat: number;
     lng: number;
   };
-  source: DataSource;
-  reviewCount: number;
+  osmType: OsmElementType;
+  osmId: number;
   distance?: number;
+  openingHours?: string;
+  website?: string;
+  phone?: string;
+  /** OSM `check_date` — when a mapper last confirmed this listing. */
+  lastCheckedISO?: string;
 }
 
-export type DataSource = "yelp" | "google_reviews" | "reddit";
+export type OsmElementType = "node" | "way" | "relation";
 
 export interface Evidence {
   restaurantId: string;
-  source: DataSource;
   claim: string;
+  /** Whether the underlying OSM tag exists. A fact, not a judgement. */
   verified: boolean;
+  /** Belief the tag is still accurate, derived from its check date. */
   confidence: number;
   menuConfirmed: boolean;
 }
@@ -55,10 +68,14 @@ export interface Evidence {
 export interface ConfidenceScore {
   restaurantId: string;
   overall: number;
-  evidenceScore: number;
-  reviewConsistency: number;
-  menuVerification: number;
-  recency: number;
+  /** `only` outranks `yes`: whole-establishment beats some-options. */
+  dietTagStrength: number;
+  /** Share of the user's needs OSM can express at all. */
+  coverage: number;
+  /** Derived from OSM check_date. */
+  tagRecency: number;
+  /** Listing completeness — explicitly not a popularity signal. */
+  dataCompleteness: number;
 }
 
 export interface Recommendation {

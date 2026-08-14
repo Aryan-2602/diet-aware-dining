@@ -79,11 +79,12 @@ export function RestaurantDetails() {
 
           {/* Meta row */}
           <div className="flex items-center gap-4 text-sm text-gray-600 mb-4">
-            <span className="flex items-center gap-1">
-              ⭐ {restaurant.rating}/5
-            </span>
-            <span>{"$".repeat(restaurant.priceLevel)}</span>
-            <span>{restaurant.reviewCount} reviews</span>
+            {typeof restaurant.distance === "number" && (
+              <span>{(restaurant.distance / 1000).toFixed(1)} km away</span>
+            )}
+            {restaurant.lastCheckedISO && (
+              <span>Checked {restaurant.lastCheckedISO}</span>
+            )}
             <span className="capitalize">
               {restaurant.cuisine.join(", ")}
             </span>
@@ -124,10 +125,10 @@ export function RestaurantDetails() {
         </div>
 
         <div className="grid grid-cols-2 gap-4">
-          <ScoreBar label="Evidence" value={confidence.evidenceScore} />
-          <ScoreBar label="Review Consistency" value={confidence.reviewConsistency} />
-          <ScoreBar label="Menu Verified" value={confidence.menuVerification} />
-          <ScoreBar label="Recency" value={confidence.recency} />
+          <ScoreBar label="Diet Tag Strength" value={confidence.dietTagStrength} />
+          <ScoreBar label="Needs Covered" value={confidence.coverage} />
+          <ScoreBar label="Listing Detail" value={confidence.dataCompleteness} />
+          <ScoreBar label="Last Checked" value={confidence.tagRecency} />
         </div>
 
         <button

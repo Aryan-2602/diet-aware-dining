@@ -10,6 +10,28 @@
 export const POSITIVE_DIET_VALUES = ["yes", "only"] as const;
 
 /**
+ * The complete controlled vocabulary. Anything outside this list is rejected
+ * wherever dietary needs enter the system — UI chips, LLM output, clarification
+ * answers — because a need with no mapping matches no OSM tag and would zero
+ * out every result under the hard filter.
+ */
+export const DIETARY_VOCABULARY = [
+  "vegan",
+  "vegetarian",
+  "gluten-free",
+  "dairy-free",
+  "keto",
+  "halal",
+  "kosher",
+  "paleo",
+  "nut-free",
+] as const;
+
+export function isKnownNeed(value: string): boolean {
+  return (DIETARY_VOCABULARY as readonly string[]).includes(value);
+}
+
+/**
  * Each need maps to the OSM tags that can satisfy it. Multiple entries are
  * alternatives (OR) — the implications are factual, not heuristic: food that is
  * vegan is by definition also vegetarian and free of dairy.

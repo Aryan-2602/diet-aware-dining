@@ -63,25 +63,25 @@ export function EvidenceView() {
           </div>
           <div className="flex-1">
             <p className="text-sm text-gray-600">
-              Based on {evidence.length} evidence points from{" "}
-              {new Set(evidence.map((e) => e.source)).size} sources
+              Based on {evidence.length} facts recorded by OpenStreetMap
+              contributors
             </p>
             <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
               <div className="flex items-center gap-1">
                 <div className="w-2 h-2 rounded-full bg-primary-500" />
-                Evidence: {Math.round(confidence.evidenceScore * 100)}%
+                Diet tags: {Math.round(confidence.dietTagStrength * 100)}%
               </div>
               <div className="flex items-center gap-1">
                 <div className="w-2 h-2 rounded-full bg-blue-500" />
-                Reviews: {Math.round(confidence.reviewConsistency * 100)}%
+                Needs covered: {Math.round(confidence.coverage * 100)}%
               </div>
               <div className="flex items-center gap-1">
                 <div className="w-2 h-2 rounded-full bg-green-500" />
-                Menu: {Math.round(confidence.menuVerification * 100)}%
+                Listing detail: {Math.round(confidence.dataCompleteness * 100)}%
               </div>
               <div className="flex items-center gap-1">
                 <div className="w-2 h-2 rounded-full bg-purple-500" />
-                Recency: {Math.round(confidence.recency * 100)}%
+                Last checked: {Math.round(confidence.tagRecency * 100)}%
               </div>
             </div>
           </div>
@@ -133,7 +133,7 @@ export function EvidenceView() {
                   </svg>
                   {e.claim}
                 </span>
-                <span className="text-xs text-gray-500 capitalize">{e.source.replace("_", " ")}</span>
+                <span className="text-xs text-gray-500">OpenStreetMap</span>
               </div>
             ))}
           </div>

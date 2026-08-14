@@ -29,10 +29,9 @@ export function RecommendationCard({
     restaurant.name + " " + restaurant.address
   )}`;
 
-  const evidenceQuote =
-    evidence.find((e) => e.verified && e.claim.includes("Offers"))?.claim ||
-    evidence.find((e) => e.verified)?.claim ||
-    "Listed on OpenStreetMap with location data verified";
+  // Only ever a real, verified claim. When there is none, nothing is shown —
+  // the previous fallback fabricated a quotation and styled it as sourced.
+  const evidenceQuote = evidence.find((e) => e.verified)?.claim ?? null;
 
   const distanceText = restaurant.distance
     ? `${(restaurant.distance / 1000).toFixed(1)} km`
@@ -64,7 +63,7 @@ export function RecommendationCard({
           </div>
         </div>
         <span className={`flex-shrink-0 px-3 py-1 rounded-full text-xs font-bold ${confidenceColor}`}>
-          {confidencePercent}% match
+          {confidencePercent}% verified
         </span>
       </div>
 
@@ -85,10 +84,12 @@ export function RecommendationCard({
         ))}
       </div>
 
-      {/* Evidence Quote */}
-      <p className="text-sm text-gray-600 italic mt-3 leading-relaxed bg-gray-50 rounded-lg px-3 py-2">
-        {`"${evidenceQuote}"`}
-      </p>
+      {/* Evidence Quote — omitted entirely when there is nothing to quote */}
+      {evidenceQuote && (
+        <p className="text-sm text-gray-600 mt-3 leading-relaxed bg-gray-50 rounded-lg px-3 py-2">
+          {evidenceQuote}
+        </p>
+      )}
 
       {/* Warnings */}
       {warnings.length > 0 && (
@@ -177,7 +178,7 @@ export function RecommendationCard({
           {/* Verify link */}
           <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
             <a
-              href={`https://www.openstreetmap.org/node/${restaurant.id.replace("osm-", "")}`}
+              href={`https://www.openstreetmap.org/${restaurant.osmType}/${restaurant.osmId}`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-xs font-medium text-blue-600 hover:text-blue-700 underline flex items-center gap-1"
@@ -206,7 +207,7 @@ export function RecommendationCard({
             <a href="https://nominatim.openstreetmap.org" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-600">
               Nominatim
             </a>
-            . Ratings estimated from data completeness (not user reviews).
+            . OpenStreetMap has no ratings, reviews or prices, so none are shown.
           </p>
         </div>
       </details>

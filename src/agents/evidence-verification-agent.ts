@@ -1,115 +1,94 @@
-import { Restaurant, Evidence } from "@/types";
+import { Evidence, ParsedIntent, Restaurant } from "@/types";
+import { DIET_TAG_ALTERNATIVES } from "@/lib/tools/diet-tags";
+import { recencyScore } from "@/lib/confidence-scorer";
 
 /**
  * Evidence Verification Agent
- * Verifies dietary claims about restaurants by checking OSM data
- * completeness and cross-referencing available metadata.
- * In production would also check Yelp/Google reviews for mentions.
+ *
+ * Each Evidence item is a literal restatement of an OpenStreetMap tag. The
+ * previous implementation hardcoded `confidence: 0.75, verified: true,
+ * menuConfirmed: true` for every dietary option a place had — including options
+ * the user never asked for — and asserted that a diet tag "is essentially a menu
+ * confirmation", which is not true. A tag says someone once recorded a claim; it
+ * does not say a menu was inspected.
+ *
+ * The split that matters: whether the tag exists is a fact (`verified`), while
+ * whether it is still accurate is a belief derived from its check date
+ * (`confidence`). Both are computed in code — an LLM has no business asserting
+ * either.
  */
 export class EvidenceVerificationAgent {
-  private readonly CONFIDENCE_THRESHOLD = 0.6;
-
-  async process(restaurants: Restaurant[]): Promise<Evidence[]> {
-    const allEvidence: Evidence[] = [];
-
-    for (const restaurant of restaurants) {
-      const evidence = await this.verifyRestaurant(restaurant);
-      allEvidence.push(...evidence);
-    }
-
-    return allEvidence;
-  }
-
-  hasEnoughEvidence(evidence: Evidence[], restaurantId: string): boolean {
-    const restaurantEvidence = evidence.filter(
-      (e) => e.restaurantId === restaurantId
-    );
-    if (restaurantEvidence.length === 0) return false;
-
-    const avgConfidence =
-      restaurantEvidence.reduce((sum, e) => sum + e.confidence, 0) /
-      restaurantEvidence.length;
-
-    return avgConfidence >= this.CONFIDENCE_THRESHOLD;
-  }
-
-  private async verifyRestaurant(restaurant: Restaurant): Promise<Evidence[]> {
+  async process(
+    restaurants: Restaurant[],
+    intent: ParsedIntent,
+    enforceableNeeds: string[],
+    unenforceableNeeds: string[]
+  ): Promise<Evidence[]> {
     const evidence: Evidence[] = [];
 
-    // Verify each dietary option claimed by the restaurant
-    for (const option of restaurant.dietaryOptions) {
-      const verificationResult = this.verifyDietaryClaim(restaurant, option);
-      evidence.push(verificationResult);
+    for (const restaurant of restaurants) {
+      const belief = recencyScore(restaurant.lastCheckedISO);
+
+      // One item per requested need that OSM can express, quoting the tag.
+      for (const need of enforceableNeeds) {
+        const tag = this.matchingTag(restaurant, need);
+        if (!tag) continue;
+        evidence.push({
+          restaurantId: restaurant.id,
+          claim: `OpenStreetMap tag ${tag.key}=${tag.value}`,
+          verified: true,
+          // A tag with no check date is still a real tag, so this floors at a
+          // low positive rather than zero.
+          confidence: Math.max(0.4, belief),
+          menuConfirmed: false,
+        });
+      }
+
+      // And one per need OSM cannot express, so the gap is stated rather than
+      // quietly omitted.
+      for (const need of unenforceableNeeds) {
+        evidence.push({
+          restaurantId: restaurant.id,
+          claim: `OpenStreetMap has no data for "${need}" — it cannot be verified`,
+          verified: false,
+          confidence: 0,
+          menuConfirmed: false,
+        });
+      }
+
+      for (const allergy of intent.restrictions) {
+        evidence.push({
+          restaurantId: restaurant.id,
+          claim: `OpenStreetMap holds no allergen or cross-contamination data, so "${allergy}" safety cannot be verified`,
+          verified: false,
+          confidence: 0,
+          menuConfirmed: false,
+        });
+      }
+
+      if (restaurant.lastCheckedISO) {
+        evidence.push({
+          restaurantId: restaurant.id,
+          claim: `Listing last confirmed by a mapper on ${restaurant.lastCheckedISO}`,
+          verified: true,
+          confidence: belief,
+          menuConfirmed: false,
+        });
+      }
     }
-
-    // Verify via data completeness (proxy for menu availability)
-    const dataEvidence = this.verifyDataCompleteness(restaurant);
-    evidence.push(dataEvidence);
-
-    // Add source verification
-    const sourceEvidence = this.verifySource(restaurant);
-    evidence.push(sourceEvidence);
 
     return evidence;
   }
 
-  private verifyDietaryClaim(
+  /** The specific tag satisfying a need, for quoting verbatim. */
+  private matchingTag(
     restaurant: Restaurant,
-    dietaryOption: string
-  ): Evidence {
-    // OSM dietary tags are community-verified, so tagged options get high confidence
-    // The fact that it exists in OSM with a diet:* tag means someone verified it
-    const confidence = 0.75; // OSM tags are reasonably trustworthy
-
-    return {
-      restaurantId: restaurant.id,
-      source: restaurant.source,
-      claim: `Offers ${dietaryOption} options (OSM verified tag)`,
-      verified: true,
-      confidence,
-      menuConfirmed: true, // OSM diet tags are essentially menu confirmations
-    };
-  }
-
-  private verifyDataCompleteness(restaurant: Restaurant): Evidence {
-    // More data = more confidence the listing is accurate and maintained
-    const hasAddress = restaurant.address !== "Address unavailable" && restaurant.address !== restaurant.name;
-    const hasCuisine = restaurant.cuisine.length > 0 && restaurant.cuisine[0] !== "restaurant";
-    const hasDietary = restaurant.dietaryOptions.length > 0;
-    
-    let confidence = 0.4; // base
-    if (hasAddress) confidence += 0.15;
-    if (hasCuisine) confidence += 0.15;
-    if (hasDietary) confidence += 0.2;
-    if (restaurant.reviewCount > 50) confidence += 0.1;
-
-    return {
-      restaurantId: restaurant.id,
-      source: restaurant.source,
-      claim: "Listing data verified via OpenStreetMap",
-      verified: confidence >= this.CONFIDENCE_THRESHOLD,
-      confidence: Math.min(0.95, confidence),
-      menuConfirmed: hasDietary,
-    };
-  }
-
-  private verifySource(restaurant: Restaurant): Evidence {
-    // Source verification based on data richness
-    const sourceConfidence: Record<string, number> = {
-      google_reviews: 0.85, // Has website + hours + phone
-      yelp: 0.7,           // Has website or hours
-      reddit: 0.5,         // Minimal data
-    };
-
-    const confidence = sourceConfidence[restaurant.source] || 0.5;
-
-    return {
-      restaurantId: restaurant.id,
-      source: restaurant.source,
-      claim: `Source: OpenStreetMap (data quality: ${restaurant.source === "google_reviews" ? "high" : restaurant.source === "yelp" ? "medium" : "basic"})`,
-      verified: confidence >= this.CONFIDENCE_THRESHOLD,
-      confidence,
-      menuConfirmed: false,
-    };
+    need: string
+  ): { key: string; value: string } | null {
+    for (const key of DIET_TAG_ALTERNATIVES[need] ?? []) {
+      const value = restaurant.dietTags[key];
+      if (value === "yes" || value === "only") return { key, value };
+    }
+    return null;
   }
 }

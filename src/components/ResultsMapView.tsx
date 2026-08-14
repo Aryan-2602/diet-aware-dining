@@ -5,7 +5,7 @@ import { useAppStore } from "@/store";
 import { RecommendationCard } from "./RecommendationCard";
 import { Recommendation } from "@/types";
 
-type SortMode = "confidence" | "distance" | "rating";
+type SortMode = "confidence" | "distance";
 
 export function ResultsMapView() {
   const recommendations = useAppStore((s) => s.recommendations);
@@ -51,9 +51,8 @@ export function ResultsMapView() {
         <div className="flex items-center gap-2">
           {(
             [
-              { key: "confidence", label: "Confidence" },
+              { key: "confidence", label: "Verification" },
               { key: "distance", label: "Distance" },
-              { key: "rating", label: "Rating" },
             ] as const
           ).map((btn) => (
             <button
@@ -138,8 +137,6 @@ function sortResults(recs: Recommendation[], mode: SortMode): Recommendation[] {
       return sorted.sort((a, b) => b.confidence.overall - a.confidence.overall);
     case "distance":
       return sorted.sort((a, b) => (a.restaurant.distance ?? 9999) - (b.restaurant.distance ?? 9999));
-    case "rating":
-      return sorted.sort((a, b) => b.restaurant.rating - a.restaurant.rating);
     default:
       return sorted;
   }
