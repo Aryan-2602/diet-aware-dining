@@ -1,0 +1,113 @@
+{
+  "_comment": "Overpass-shaped fixture for offline tests. The three node ids and names are real Seattle OSM data observed while verifying the new query; the remaining entries are constructed to cover the edge cases a live capture would not reliably contain: a way element, diet:*=no, diet:*=limited, a missing tag, and a place with no check_date.",
+  "version": 0.6,
+  "generator": "fixture",
+  "elements": [
+    {
+      "type": "node",
+      "id": 2158768453,
+      "lat": 47.6152,
+      "lon": -122.3447,
+      "tags": {
+        "amenity": "restaurant",
+        "name": "Voodoo Doughnut",
+        "diet:vegan": "yes",
+        "diet:gluten_free": "yes",
+        "cuisine": "donut",
+        "addr:street": "Pike Street",
+        "addr:housenumber": "1501",
+        "website": "https://example.test/voodoo",
+        "phone": "+1-206-555-0100",
+        "opening_hours": "24/7",
+        "check_date": "2025-06-01"
+      }
+    },
+    {
+      "type": "node",
+      "id": 2327716521,
+      "lat": 47.6098,
+      "lon": -122.3421,
+      "tags": {
+        "amenity": "restaurant",
+        "name": "Askatu",
+        "diet:vegan": "only",
+        "diet:gluten_free": "yes",
+        "cuisine": "vegan",
+        "addr:street": "Union Street",
+        "check_date:diet:vegan": "2025-09-15"
+      }
+    },
+    {
+      "type": "node",
+      "id": 5799745554,
+      "lat": 47.6141,
+      "lon": -122.3388,
+      "tags": {
+        "amenity": "fast_food",
+        "name": "Mendocino Farms",
+        "diet:vegan": "yes",
+        "diet:gluten_free": "yes",
+        "cuisine": "sandwich"
+      }
+    },
+    {
+      "type": "way",
+      "id": 44112233,
+      "center": { "lat": 47.6115, "lon": -122.3299 },
+      "tags": {
+        "amenity": "restaurant",
+        "name": "Building-Mapped Vegan Kitchen",
+        "diet:vegan": "yes",
+        "cuisine": "japanese;ramen",
+        "check_date": "2019-01-01"
+      }
+    },
+    {
+      "type": "node",
+      "id": 900000001,
+      "lat": 47.61,
+      "lon": -122.33,
+      "tags": {
+        "amenity": "restaurant",
+        "name": "Explicitly Not Vegan",
+        "diet:vegan": "no",
+        "cuisine": "steak_house"
+      }
+    },
+    {
+      "type": "node",
+      "id": 900000002,
+      "lat": 47.611,
+      "lon": -122.331,
+      "tags": {
+        "amenity": "restaurant",
+        "name": "Only Limited Vegan Options",
+        "diet:vegan": "limited",
+        "cuisine": "american"
+      }
+    },
+    {
+      "type": "node",
+      "id": 900000003,
+      "lat": 47.612,
+      "lon": -122.332,
+      "tags": {
+        "amenity": "restaurant",
+        "name": "Untagged Diner",
+        "cuisine": "diner"
+      }
+    },
+    {
+      "type": "node",
+      "id": 900000004,
+      "lat": 47.613,
+      "lon": -122.333,
+      "tags": {
+        "amenity": "restaurant",
+        "name": "Vegetarian But Not Vegan",
+        "diet:vegetarian": "yes",
+        "cuisine": "indian"
+      }
+    }
+  ]
+}

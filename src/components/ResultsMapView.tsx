@@ -86,6 +86,44 @@ export function ResultsMapView() {
 
   return (
     <div className="space-y-6">
+      {/* Allergies can never be verified from OpenStreetMap, so this is shown
+          whenever any were given and cannot be dismissed. */}
+      {parsedIntent && parsedIntent.restrictions.length > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+          <p className="text-sm text-red-800 font-semibold mb-1">
+            ⚠️ Allergy information cannot be verified
+          </p>
+          <p className="text-sm text-red-700">
+            OpenStreetMap holds no allergen or cross-contamination data. Nothing
+            below has been checked for{" "}
+            <span className="font-medium">
+              {parsedIntent.restrictions.join(", ")}
+            </span>
+            . Call ahead and tell staff directly.
+          </p>
+        </div>
+      )}
+
+      {searchMeta && searchMeta.unenforceableNeeds.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <p className="text-sm text-amber-900">
+            OpenStreetMap has no tag for{" "}
+            <span className="font-medium">
+              {searchMeta.unenforceableNeeds.join(", ")}
+            </span>
+            , so results below are filtered on{" "}
+            {searchMeta.enforceableNeeds.length > 0 ? (
+              <span className="font-medium">
+                {searchMeta.enforceableNeeds.join(" and ")}
+              </span>
+            ) : (
+              "location"
+            )}{" "}
+            only.
+          </p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -94,8 +132,10 @@ export function ResultsMapView() {
           </h2>
           {metadata && (
             <p className="text-sm text-gray-500 mt-1">
-              {metadata.totalFound} searched • {metadata.verified} verified •{" "}
-              {Math.round(metadata.avgConfidence * 100)}% avg confidence
+              {metadata.candidatesScanned ?? 0} places checked •{" "}
+              {recommendations.length} verified match
+              {recommendations.length === 1 ? "" : "es"} •{" "}
+              {Math.round(metadata.avgConfidence * 100)}% avg verification
             </p>
           )}
         </div>

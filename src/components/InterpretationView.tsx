@@ -25,12 +25,12 @@ const AGENT_STEPS: {
   {
     id: "restaurant_discovery",
     label: "Restaurant Discovery Agent",
-    description: "Searching Yelp, Google Reviews, Reddit, Menu APIs...",
+    description: "Searching OpenStreetMap via the Overpass API...",
   },
   {
     id: "evidence_verification",
     label: "Evidence Verification Agent",
-    description: "Cross-referencing claims across sources...",
+    description: "Checking diet:* tags against your requirements...",
   },
   {
     id: "trust_confidence",
@@ -99,22 +99,10 @@ export function InterpretationView({ currentAgent }: InterpretationViewProps) {
                 </p>
               </div>
             )}
-            {parsedIntent.mealType && (
-              <div>
-                <span className="text-gray-500">Meal Type:</span>
-                <p className="font-medium text-gray-900 mt-1 capitalize">
-                  {parsedIntent.mealType}
-                </p>
-              </div>
-            )}
-            {parsedIntent.priceRange && parsedIntent.priceRange !== "any" && (
-              <div>
-                <span className="text-gray-500">Price Range:</span>
-                <p className="font-medium text-gray-900 mt-1 capitalize">
-                  {parsedIntent.priceRange}
-                </p>
-              </div>
-            )}
+            {/* Meal type and price range are deliberately not shown. Neither
+                reaches the search: opening_hours parsing is not implemented and
+                OpenStreetMap has no price data. Displaying them alongside the
+                filters that DO apply implied they were being honoured. */}
             {parsedIntent.restrictions.length > 0 && (
               <div>
                 <span className="text-gray-500">Restrictions:</span>

@@ -1,6 +1,4 @@
 import { ParsedIntent, Restaurant } from "@/types";
-import { runAgent, type AgentTool } from "@/lib/agent";
-import { LLMUnavailableError } from "@/lib/llm-client";
 import { geocode, type GeocodeResult } from "@/lib/tools/geocode";
 import {
   distanceMeters,
@@ -15,19 +13,26 @@ import {
 } from "@/lib/tools/diet-tags";
 
 /**
- * Restaurant Discovery Agent
+ * Restaurant Discovery
  *
- * An LLM agent over two deterministic tools. It chooses the search strategy —
- * how wide to go, whether a cuisine preference is worth insisting on, when to
- * stop — while the dietary constraint is enforced inside the tools and
- * re-asserted here in code. Strategy is a judgement call; dietary safety is not.
- *
- * Falls back to a fixed strategy when the LLM is unavailable, so the app keeps
- * working with no API key.
+ * Deterministic by design. Which restaurants a person is shown must be
+ * reproducible, so every decision here — radius, filtering, ordering — is made
+ * in code. The dietary constraint is applied in the Overpass query and
+ * re-asserted after parsing.
  */
 
-const DEFAULT_RADIUS_M = 8000;
-const MAX_RADIUS_M = 25_000;
+/**
+ * Fixed ladder. Widening when there are too few matches is a mechanical
+ * decision with one correct answer, so it lives in code: an earlier revision
+ * let the planning agent choose the radius and the end-to-end eval caught it
+ * immediately — two runs of the same query picked different radii and returned
+ * different restaurants. Anything that changes *which* restaurants a person
+ * sees has to be reproducible.
+ *
+ * The agent's judgement is applied where judgement actually exists: reading the
+ * request, asking for clarification, and explaining results.
+ */
+const RADIUS_LADDER_M = [2000, 5000, 10_000, 25_000];
 const MIN_RESULTS = 3;
 const MAX_RESULTS = 15;
 
@@ -51,27 +56,11 @@ export class RestaurantDiscoveryAgent {
     const geocoded = await geocode(intent.location);
     const { enforceable, unenforceable } = partitionNeeds(intent.dietaryNeeds);
 
-    let places: OverpassPlace[];
-    let radiusSearchedM = DEFAULT_RADIUS_M;
-
-    try {
-      const planned = await this.planWithLLM(intent, geocoded, enforceable);
-      places = planned.places;
-      radiusSearchedM = planned.radiusM;
-    } catch (error) {
-      if (!(error instanceof LLMUnavailableError)) throw error;
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(
-        `[RestaurantDiscoveryAgent] planning unavailable, using default strategy: ${message}`
-      );
-      places = await searchRestaurants({
-        lat: geocoded.lat,
-        lng: geocoded.lng,
-        radiusM: DEFAULT_RADIUS_M,
-        dietNeeds: enforceable,
-        cuisineType: intent.cuisineType,
-      });
-    }
+    const { places, radiusSearchedM } = await this.searchWithLadder(
+      intent,
+      geocoded,
+      enforceable
+    );
 
     const candidatesScanned = places.length;
     const restaurants = this.toRestaurants(places, intent, enforceable, geocoded);
@@ -88,111 +77,37 @@ export class RestaurantDiscoveryAgent {
   }
 
   /**
-   * Lets the agent pick a radius and decide whether to widen. The diet
-   * constraint is passed to the tool by us, not chosen by the model — the model
-   * is never given the option to drop it.
+   * Widens until there are enough matches. Deterministic and reproducible:
+   * the same query at the same moment always issues the same sequence of
+   * requests and returns the same restaurants.
+   *
+   * The diet filter is what makes this affordable — it cuts a city radius from
+   * hundreds of places to tens, so the widest step is still a small response.
    */
-  private async planWithLLM(
+  private async searchWithLadder(
     intent: ParsedIntent,
     geocoded: GeocodeResult,
     enforceableNeeds: string[]
-  ): Promise<{ places: OverpassPlace[]; radiusM: number }> {
-    let lastPlaces: OverpassPlace[] = [];
-    let lastRadius = DEFAULT_RADIUS_M;
+  ): Promise<{ places: OverpassPlace[]; radiusSearchedM: number }> {
+    let places: OverpassPlace[] = [];
+    let radiusSearchedM = RADIUS_LADDER_M[0];
 
-    const searchTool: AgentTool<{ radiusM?: number }, unknown> = {
-      name: "search_restaurants",
-      description:
-        "Search OpenStreetMap for restaurants near the user's location. The " +
-        "dietary requirement is always applied and cannot be disabled. Returns " +
-        "how many matches were found at that radius.",
-      parameters: {
-        type: "object",
-        properties: {
-          radiusM: {
-            type: "number",
-            description: `Search radius in metres, ${1000}-${MAX_RADIUS_M}.`,
-          },
-        },
-        required: ["radiusM"],
-      },
-      execute: async ({ radiusM }) => {
-        const radius = Math.min(
-          Math.max(Number(radiusM) || DEFAULT_RADIUS_M, 1000),
-          MAX_RADIUS_M
-        );
-        const places = await searchRestaurants({
-          lat: geocoded.lat,
-          lng: geocoded.lng,
-          radiusM: radius,
-          dietNeeds: enforceableNeeds,
-          cuisineType: intent.cuisineType,
-        });
-        lastPlaces = places;
-        lastRadius = radius;
-
-        const cuisineHits = intent.cuisineType
-          ? places.filter((p) =>
-              cuisineMatches(
-                (p.tags.cuisine ?? "").split(";"),
-                intent.cuisineType
-              )
-            ).length
-          : null;
-
-        return {
-          radiusM: radius,
-          matches: places.length,
-          matchingRequestedCuisine: cuisineHits,
-        };
-      },
-    };
-
-    const system = [
-      "You plan a restaurant search over OpenStreetMap.",
-      "Call search_restaurants to find places, then reply with a one-sentence",
-      "summary of what you searched. Reply with text only once you are done.",
-      "",
-      "Guidance:",
-      `- Start around ${DEFAULT_RADIUS_M} metres.`,
-      `- If there are fewer than ${MIN_RESULTS} matches, widen once (up to ${MAX_RADIUS_M} metres).`,
-      "- If a wider search still finds nothing, stop. Reporting an honest empty",
-      "  result is correct; there is no way to loosen the dietary requirement.",
-      "- Do not widen when you already have enough matches; nearer is better.",
-      "- Never call the tool more than three times.",
-    ].join("\n");
-
-    const user = [
-      `Location: ${geocoded.displayName}`,
-      `Dietary requirements enforced: ${
-        enforceableNeeds.length ? enforceableNeeds.join(", ") : "none"
-      }`,
-      `Preferred cuisine: ${intent.cuisineType ?? "no preference"}`,
-      `Original request: ${intent.location}`,
-    ].join("\n");
-
-    await runAgent({
-      system,
-      user,
-      tools: [searchTool as AgentTool<never, unknown>],
-      maxIterations: 4,
-      maxTokens: 300,
-    });
-
-    // If the agent finished without ever searching, that is a planning failure,
-    // not an empty result — fall back rather than reporting zero matches.
-    if (!lastPlaces.length && lastRadius === DEFAULT_RADIUS_M) {
-      const places = await searchRestaurants({
+    for (const radiusM of RADIUS_LADDER_M) {
+      radiusSearchedM = radiusM;
+      places = await searchRestaurants({
         lat: geocoded.lat,
         lng: geocoded.lng,
-        radiusM: DEFAULT_RADIUS_M,
+        radiusM,
         dietNeeds: enforceableNeeds,
         cuisineType: intent.cuisineType,
       });
-      return { places, radiusM: DEFAULT_RADIUS_M };
+      const usable = places.filter((p) =>
+        matchesAllNeeds(p.tags, enforceableNeeds)
+      );
+      if (usable.length >= MIN_RESULTS) break;
     }
 
-    return { places: lastPlaces, radiusM: lastRadius };
+    return { places, radiusSearchedM };
   }
 
   /**
@@ -295,7 +210,7 @@ export class RestaurantDiscoveryAgent {
     restaurants: Restaurant[],
     searchedM: number
   ): number {
-    for (const radius of [1000, 2000, 5000, 10_000, MAX_RADIUS_M]) {
+    for (const radius of RADIUS_LADDER_M) {
       if (radius > searchedM) break;
       const within = restaurants.filter((r) => (r.distance ?? Infinity) <= radius);
       if (within.length >= MIN_RESULTS) return radius;
