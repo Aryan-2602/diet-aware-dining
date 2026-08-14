@@ -25,6 +25,30 @@ export class LLMUnavailableError extends Error {
   }
 }
 
+/** An OpenAI-shaped chat message. `tool` messages carry a tool result. */
+export interface ChatMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+}
+
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+/** A function the model may call, in the shape the API expects. */
+export interface ToolSchema {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
 export interface CallLLMOptions {
   system: string;
   user: string;
@@ -37,23 +61,69 @@ export interface CallLLMOptions {
   jsonMode?: boolean;
 }
 
+export interface CallLLMRawOptions {
+  messages: ChatMessage[];
+  tools?: ToolSchema[];
+  maxTokens?: number;
+  timeoutMs?: number;
+  jsonMode?: boolean;
+}
+
+export interface LLMReply {
+  content: string | null;
+  toolCalls: ToolCall[];
+  finishReason: string | null;
+}
+
 interface OpenAIChatCompletionResponse {
   choices?: Array<{
-    message?: { content?: string | null };
+    message?: {
+      content?: string | null;
+      tool_calls?: ToolCall[] | null;
+    };
+    finish_reason?: string | null;
   }>;
 }
 
 /**
- * Sends a single-turn request to the Chat Completions API and returns the
- * assistant message content.
+ * Sends a single-turn request and returns the assistant message text.
+ * Convenience wrapper over `callLLMRaw` for the no-tools case.
  */
 export async function callLLM({
   system,
   user,
+  maxTokens,
+  timeoutMs,
+  jsonMode,
+}: CallLLMOptions): Promise<string> {
+  const reply = await callLLMRaw({
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    maxTokens,
+    timeoutMs,
+    jsonMode,
+  });
+
+  if (!reply.content) {
+    throw new LLMUnavailableError("OpenAI API response contained no content");
+  }
+  return reply.content;
+}
+
+/**
+ * Full-fidelity Chat Completions call: arbitrary message history, optional
+ * tool schemas, and the tool calls / finish reason returned intact. This is
+ * what the agent loop in `agent.ts` drives.
+ */
+export async function callLLMRaw({
+  messages,
+  tools,
   maxTokens = DEFAULT_MAX_TOKENS,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   jsonMode = false,
-}: CallLLMOptions): Promise<string> {
+}: CallLLMRawOptions): Promise<LLMReply> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new LLMUnavailableError("OPENAI_API_KEY is not set");
@@ -74,10 +144,8 @@ export async function callLLM({
         model: process.env.OPENAI_MODEL || DEFAULT_MODEL,
         max_completion_tokens: maxTokens,
         ...(jsonMode ? { response_format: { type: "json_object" } } : {}),
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
+        ...(tools?.length ? { tools } : {}),
+        messages,
       }),
       signal: controller.signal,
     });
@@ -107,12 +175,16 @@ export async function callLLM({
     throw new LLMUnavailableError("OpenAI API returned a non-JSON body");
   }
 
-  const content = payload.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new LLMUnavailableError("OpenAI API response contained no content");
+  const choice = payload.choices?.[0];
+  if (!choice) {
+    throw new LLMUnavailableError("OpenAI API response contained no choices");
   }
 
-  return content;
+  return {
+    content: choice.message?.content ?? null,
+    toolCalls: choice.message?.tool_calls ?? [],
+    finishReason: choice.finish_reason ?? null,
+  };
 }
 
 /**
