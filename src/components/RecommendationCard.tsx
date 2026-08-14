@@ -164,14 +164,12 @@ export function RecommendationCard({
           Sources ({evidence.length} evidence points)
         </summary>
         <div className="mt-3 space-y-3 pl-5">
-          {/* What is OSM info box */}
-          <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2.5 text-xs text-blue-800">
-            <p className="font-semibold mb-1">📍 Data Source: OpenStreetMap (OSM)</p>
-            <p className="text-blue-700 leading-relaxed">
-              OSM is the Wikipedia of maps — a free, community-maintained database with 10M+ contributors worldwide.
-              Dietary tags (vegan, halal, gluten-free) are verified by local mappers who visit these restaurants.
-            </p>
-          </div>
+          {/* One line, not a paragraph. This block rendered once per card, so
+              ten results meant ten copies of the same explanation; the full
+              text lives in the footer. */}
+          <p className="text-xs text-blue-800">
+            📍 Tagged by OpenStreetMap contributors
+          </p>
 
           {/* Evidence list */}
           {evidence.map((e, i) => (
@@ -215,17 +213,6 @@ export function RecommendationCard({
             </a>
           </div>
 
-          <p className="text-[10px] text-gray-400 italic">
-            Real-time data fetched via{" "}
-            <a href="https://overpass-api.de" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-600">
-              Overpass API
-            </a>{" "}
-            + geocoded with{" "}
-            <a href="https://nominatim.openstreetmap.org" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-600">
-              Nominatim
-            </a>
-            . OpenStreetMap has no ratings, reviews or prices, so none are shown.
-          </p>
         </div>
       </details>
     </div>

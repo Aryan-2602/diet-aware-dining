@@ -115,7 +115,7 @@ export function ResultsMapView() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Allergies can never be verified from OpenStreetMap, so this is shown
           whenever any were given and cannot be dismissed. */}
       {parsedIntent && parsedIntent.restrictions.length > 0 && (
@@ -156,19 +156,15 @@ export function ResultsMapView() {
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">
-            Results ({recommendations.length})
-          </h2>
+        <h2 className="text-xl font-bold text-gray-900">
+          {recommendations.length} verified match
+          {recommendations.length === 1 ? "" : "es"}
           {metadata && (
-            <p className="text-sm text-gray-500 mt-1">
-              {metadata.candidatesScanned ?? 0} places checked •{" "}
-              {recommendations.length} verified match
-              {recommendations.length === 1 ? "" : "es"} •{" "}
-              {Math.round(metadata.avgConfidence * 100)}% avg verification
-            </p>
+            <span className="ml-2 text-sm font-normal text-gray-500">
+              from {metadata.candidatesScanned ?? 0} places checked
+            </span>
           )}
-        </div>
+        </h2>
         <div className="flex items-center gap-2">
           {(
             [
@@ -196,21 +192,6 @@ export function ResultsMapView() {
           </button>
         </div>
       </div>
-
-      {/* Active Filters */}
-      {parsedIntent && parsedIntent.dietaryNeeds.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-gray-500">Active filters:</span>
-          {parsedIntent.dietaryNeeds.map((need) => (
-            <span
-              key={need}
-              className="px-3 py-1 bg-primary-50 text-primary-700 text-xs font-semibold rounded-full capitalize"
-            >
-              {need}
-            </span>
-          ))}
-        </div>
-      )}
 
       {/* Desktop: Map + Cards side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">

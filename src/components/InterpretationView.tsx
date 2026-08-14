@@ -5,7 +5,6 @@
  * `page.tsx`, not by streamed pipeline events — the API is one blocking POST.
  * Meal type and price are not shown: neither is applied to the Overpass query.
  */
-import { useAppStore } from "@/store";
 import { AgentName } from "@/types";
 
 interface InterpretationViewProps {
@@ -21,11 +20,6 @@ const AGENT_STEPS: {
     id: "dietary_intent",
     label: "Dietary Intent Agent",
     description: "Parsing dietary needs, restrictions, cuisine, location...",
-  },
-  {
-    id: "clarification",
-    label: "Clarification Agent",
-    description: "Checking for ambiguities...",
   },
   {
     id: "restaurant_discovery",
@@ -48,9 +42,13 @@ const AGENT_STEPS: {
     description: "Building map view with markers...",
   },
   {
+    // Kept because page.tsx still steps through this id — dropping it would
+    // make currentIdx -1 for that tick and reset the whole stepper. The copy no
+    // longer says "preparing results for export", which implied a download
+    // button that does not exist.
     id: "export",
     label: "Export Agent",
-    description: "Preparing results for export...",
+    description: "Serializing results...",
   },
   {
     id: "recommendation",
@@ -61,73 +59,15 @@ const AGENT_STEPS: {
 
 /** Stepper UI; highlight is `currentAgent` from the parent, not live agent status. */
 export function InterpretationView({ currentAgent }: InterpretationViewProps) {
-  const parsedIntent = useAppStore((s) => s.parsedIntent);
+  // Deliberately NOT reading parsedIntent from the store. It is only written by
+  // setResults, i.e. after this screen has been dismissed, so rendering it here
+  // showed nothing on a first search and the *previous* query's needs and
+  // location on every search after that.
 
   const currentIdx = AGENT_STEPS.findIndex((a) => a.id === currentAgent);
 
   return (
     <div className="w-full max-w-3xl mx-auto space-y-6">
-      {/* Parsed Intent Display */}
-      {parsedIntent && (
-        <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-4">
-            AI Query Interpretation
-          </h3>
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            {parsedIntent.dietaryNeeds.length > 0 && (
-              <div>
-                <span className="text-gray-500">Dietary Needs:</span>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {parsedIntent.dietaryNeeds.map((need) => (
-                    <span
-                      key={need}
-                      className="px-2 py-0.5 bg-primary-50 text-primary-700 rounded-full text-xs font-medium"
-                    >
-                      {need}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {parsedIntent.location && (
-              <div>
-                <span className="text-gray-500">Location:</span>
-                <p className="font-medium text-gray-900 mt-1">
-                  {parsedIntent.location}
-                </p>
-              </div>
-            )}
-            {parsedIntent.cuisineType && (
-              <div>
-                <span className="text-gray-500">Cuisine:</span>
-                <p className="font-medium text-gray-900 mt-1 capitalize">
-                  {parsedIntent.cuisineType}
-                </p>
-              </div>
-            )}
-            {/* Meal type and price range are deliberately not shown. Neither
-                reaches the search: opening_hours parsing is not implemented and
-                OpenStreetMap has no price data. Displaying them alongside the
-                filters that DO apply implied they were being honoured. */}
-            {parsedIntent.restrictions.length > 0 && (
-              <div>
-                <span className="text-gray-500">Restrictions:</span>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {parsedIntent.restrictions.map((r) => (
-                    <span
-                      key={r}
-                      className="px-2 py-0.5 bg-red-50 text-red-700 rounded-full text-xs font-medium"
-                    >
-                      {r}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Agent Progress */}
       <div className="bg-white rounded-2xl shadow-lg p-6">
         <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-4">
