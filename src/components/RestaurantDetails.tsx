@@ -8,7 +8,24 @@
  * a different grouping of the same evidence array, and fewer links. The two
  * screens mostly existed to link to each other.
  */
+import { ArrowLeft, Clock, Globe, Navigation, Phone } from "lucide-react";
 import { useAppStore } from "@/store";
+import { Alert } from "./ui/Alert";
+import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
+import { Card } from "./ui/Card";
+import { EmptyState } from "./ui/EmptyState";
+import { confidenceTier, TIER_LABEL } from "@/lib/confidence";
+import { formatDistanceKm, mapsDirectionsUrl, percent } from "@/lib/format";
+import {
+  ExternalIcon,
+  ICON_SM,
+  SaveIcon,
+  SavedIcon,
+  UnverifiableIcon,
+  VerifiedIcon,
+  iconProps,
+} from "@/lib/icons";
 
 /** Full detail for `selectedRestaurant`, including its evidence breakdown. */
 export function RestaurantDetails() {
@@ -19,20 +36,19 @@ export function RestaurantDetails() {
   // Subscribes to the saved list itself, not the isRestaurantSaved getter.
   // Selecting the getter returns the same function reference on every render,
   // so zustand's Object.is check saw no change and the button never re-rendered
-  // — the label stayed "☆ Save" after saving, and users clicked again.
+  // — the label stayed on "Save" after saving, and users clicked again.
   const savedRestaurants = useAppStore((s) => s.savedRestaurants);
 
   if (!selectedRestaurant) {
     return (
-      <div className="text-center py-12">
-        <p className="text-gray-500">No restaurant selected.</p>
-        <button
-          onClick={() => setPage("results")}
-          className="mt-4 text-primary-600 hover:text-primary-700 font-medium"
-        >
-          ← Back to Results
-        </button>
-      </div>
+      <EmptyState
+        title="No restaurant selected"
+        action={
+          <Button variant="secondary" icon={ArrowLeft} onClick={() => setPage("results")}>
+            Back to results
+          </Button>
+        }
+      />
     );
   }
 
@@ -51,24 +67,27 @@ export function RestaurantDetails() {
 
   return (
     <div className="w-full max-w-3xl mx-auto space-y-4">
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={ArrowLeft}
         onClick={() => setPage("results")}
-        className="text-sm text-gray-500 hover:text-gray-700 font-medium"
+        className="-ml-2.5"
       >
-        ← Back to results
-      </button>
+        Back to results
+      </Button>
 
       {/* 1. Identity, dietary tags, contact */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+      <Card>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-2xl font-bold text-gray-900">
+            <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
               {restaurant.name}
             </h1>
             <p className="text-sm text-gray-500 mt-1">
               {restaurant.address}
               {typeof restaurant.distance === "number" &&
-                ` • ${(restaurant.distance / 1000).toFixed(1)} km away`}
+                ` • ${formatDistanceKm(restaurant.distance)} away`}
             </p>
             {restaurant.cuisine.length > 0 && (
               <p className="text-sm text-gray-500 capitalize mt-0.5">
@@ -76,27 +95,23 @@ export function RestaurantDetails() {
               </p>
             )}
           </div>
-          <button
+          <Button
+            variant="secondary"
+            icon={isSaved ? SavedIcon : SaveIcon}
+            aria-pressed={isSaved}
             onClick={handleToggleSave}
-            className={`flex-shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              isSaved
-                ? "bg-primary-100 text-primary-700"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
+            className="flex-shrink-0"
           >
-            {isSaved ? "★ Saved" : "☆ Save"}
-          </button>
+            {isSaved ? "Saved" : "Save"}
+          </Button>
         </div>
 
         {restaurant.dietaryOptions.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-4">
             {restaurant.dietaryOptions.map((option) => (
-              <span
-                key={option}
-                className="px-3 py-1 bg-primary-50 text-primary-700 text-xs font-semibold rounded-full capitalize"
-              >
-                ✓ {option}
-              </span>
+              <Badge key={option} tone="verified" icon={VerifiedIcon} className="capitalize">
+                {option}
+              </Badge>
             ))}
           </div>
         )}
@@ -108,9 +123,10 @@ export function RestaurantDetails() {
           {restaurant.phone && (
             <a
               href={`tel:${restaurant.phone.replace(/\s/g, "")}`}
-              className="font-medium text-primary-600 hover:text-primary-700"
+              className="inline-flex items-center gap-1.5 font-medium text-gray-700 hover:text-gray-900 hover:underline"
             >
-              📞 {restaurant.phone}
+              <Phone size={ICON_SM} {...iconProps} />
+              {restaurant.phone}
             </a>
           )}
           {restaurant.website && (
@@ -118,28 +134,33 @@ export function RestaurantDetails() {
               href={restaurant.website}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-gray-600 hover:text-gray-900 underline"
+              className="inline-flex items-center gap-1.5 text-gray-600 hover:text-gray-900 hover:underline"
             >
+              <Globe size={ICON_SM} {...iconProps} />
               Website
             </a>
           )}
           {restaurant.openingHours && (
-            <span className="text-gray-500">🕐 {restaurant.openingHours}</span>
+            <span className="inline-flex items-center gap-1.5 text-gray-500">
+              <Clock size={ICON_SM} {...iconProps} />
+              {restaurant.openingHours}
+            </span>
           )}
           <a
-            href={`https://www.google.com/maps/dir/?api=1&destination=${restaurant.location.lat},${restaurant.location.lng}`}
+            href={mapsDirectionsUrl(restaurant.location.lat, restaurant.location.lng)}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-gray-600 hover:text-gray-900 underline"
+            className="inline-flex items-center gap-1.5 text-gray-600 hover:text-gray-900 hover:underline"
           >
+            <Navigation size={ICON_SM} {...iconProps} />
             Directions
           </a>
         </div>
-      </div>
+      </Card>
 
       {/* 2. Why it matched, and what we could not check */}
       {(matchReasons.length > 0 || warnings.length > 0) && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-4">
+        <Card className="space-y-4">
           {matchReasons.length > 0 && (
             <div>
               <h2 className="text-sm font-semibold text-gray-900 mb-2">
@@ -147,8 +168,12 @@ export function RestaurantDetails() {
               </h2>
               <ul className="space-y-1.5">
                 {matchReasons.map((reason, i) => (
-                  <li key={i} className="text-sm text-gray-700 flex gap-2">
-                    <span className="text-primary-500">✓</span>
+                  <li key={i} className="flex gap-2 text-sm text-gray-700">
+                    <VerifiedIcon
+                      size={ICON_SM}
+                      className="mt-0.5 shrink-0 text-verified-600"
+                      {...iconProps}
+                    />
                     {reason}
                   </li>
                 ))}
@@ -156,35 +181,35 @@ export function RestaurantDetails() {
             </div>
           )}
           {warnings.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-              <h2 className="text-sm font-semibold text-amber-900 mb-2">
-                What we could not verify
-              </h2>
+            <Alert tone="caution" title="What we could not verify">
               <ul className="space-y-1.5">
                 {warnings.map((warning, i) => (
-                  <li key={i} className="text-sm text-amber-800 flex gap-2">
-                    <span>⚠️</span>
-                    {warning}
-                  </li>
+                  <li key={i}>{warning}</li>
                 ))}
               </ul>
-            </div>
+            </Alert>
           )}
-        </div>
+        </Card>
       )}
 
       {/* 3. Verification: score, sub-scores, and the raw OSM evidence */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-        <div className="flex items-center justify-between mb-4">
+      <Card>
+        <div className="mb-4 flex items-start justify-between gap-4">
           <h2 className="text-sm font-semibold text-gray-900">
             Verification strength
           </h2>
-          <span className="text-2xl font-bold text-primary-600">
-            {Math.round(confidence.overall * 100)}%
-          </span>
+          {/* The bare percentage said nothing about whether it was good. */}
+          <div className="text-right">
+            <p className="text-3xl font-semibold tabular-nums text-gray-900">
+              {percent(confidence.overall)}%
+            </p>
+            <p className="text-xs text-gray-500">
+              {TIER_LABEL[confidenceTier(confidence.overall)]}
+            </p>
+          </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 mb-5">
+        <div className="mb-5 grid grid-cols-2 gap-4">
           <ScoreBar label="Diet Tag Strength" value={confidence.dietTagStrength} />
           <ScoreBar label="Needs Covered" value={confidence.coverage} />
           <ScoreBar label="Listing Detail" value={confidence.dataCompleteness} />
@@ -200,11 +225,18 @@ export function RestaurantDetails() {
               {verified.map((e, i) => (
                 <li
                   key={i}
-                  className="text-sm text-gray-700 px-3 py-2 bg-primary-50 rounded-lg flex items-center justify-between gap-3"
+                  className="flex items-center justify-between gap-3 rounded-lg bg-verified-50 px-3 py-2 text-sm text-gray-700"
                 >
-                  <span>✓ {e.claim}</span>
-                  <span className="flex-shrink-0 text-xs text-gray-500">
-                    {Math.round(e.confidence * 100)}%
+                  <span className="flex items-center gap-2">
+                    <VerifiedIcon
+                      size={ICON_SM}
+                      className="shrink-0 text-verified-600"
+                      {...iconProps}
+                    />
+                    {e.claim}
+                  </span>
+                  <span className="flex-shrink-0 text-xs tabular-nums text-gray-500">
+                    {percent(e.confidence)}%
                   </span>
                 </li>
               ))}
@@ -221,22 +253,28 @@ export function RestaurantDetails() {
               {unverified.map((e, i) => (
                 <li
                   key={i}
-                  className="text-sm text-amber-800 px-3 py-2 bg-amber-50 rounded-lg"
+                  className="flex items-center gap-2 rounded-lg bg-caution-50 px-3 py-2 text-sm text-caution-800"
                 >
-                  ? {e.claim}
+                  <UnverifiableIcon
+                    size={ICON_SM}
+                    className="shrink-0 text-caution-600"
+                    {...iconProps}
+                  />
+                  {e.claim}
                 </li>
               ))}
             </ul>
           </div>
         )}
 
-        <div className="flex items-center gap-4 mt-5 pt-4 border-t border-gray-100 text-xs">
+        <div className="mt-5 flex flex-wrap items-center gap-4 border-t border-gray-100 pt-4 text-xs">
           <a
             href={`https://www.openstreetmap.org/${restaurant.osmType}/${restaurant.osmId}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-medium text-blue-600 hover:text-blue-700 underline"
+            className="inline-flex items-center gap-1 font-medium text-source-600 hover:text-source-700 hover:underline"
           >
+            <ExternalIcon size={ICON_SM} {...iconProps} />
             Verify on OpenStreetMap
           </a>
           {/* Replaces a "Report Inaccuracy" button that had no onClick at all.
@@ -246,29 +284,44 @@ export function RestaurantDetails() {
             href={`https://www.openstreetmap.org/edit?${restaurant.osmType}=${restaurant.osmId}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-gray-500 hover:text-gray-700 underline"
+            className="text-gray-500 hover:text-gray-900 hover:underline"
           >
             Something wrong? Edit it in OpenStreetMap
           </a>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
 
+/**
+ * One component of the confidence score.
+ *
+ * The fill is neutral ink rather than green on purpose: these are inputs to a
+ * measurement, not verdicts, and colouring each one green implies every one is
+ * "good". The single green judgement is the overall tier above.
+ */
 function ScoreBar({ label, value }: { label: string; value: number }) {
+  const pct = percent(value);
   return (
     <div>
-      <div className="flex items-center justify-between mb-1">
+      <div className="mb-1 flex items-center justify-between">
         <span className="text-xs text-gray-500">{label}</span>
-        <span className="text-xs font-medium text-gray-700">
-          {Math.round(value * 100)}%
+        <span className="text-xs font-medium tabular-nums text-gray-700">
+          {pct}%
         </span>
       </div>
-      <div className="w-full bg-gray-200 rounded-full h-1.5">
+      <div
+        role="meter"
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`${label}: ${pct} percent`}
+        className="h-1.5 w-full rounded-full bg-gray-100"
+      >
         <div
-          className="bg-primary-400 h-1.5 rounded-full"
-          style={{ width: `${value * 100}%` }}
+          className="h-1.5 rounded-full bg-gray-900/85"
+          style={{ width: `${pct}%` }}
         />
       </div>
     </div>
