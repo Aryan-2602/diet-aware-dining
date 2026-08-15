@@ -57,7 +57,7 @@ Everything below follows from that.
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │  Browser                                                │
 │  Next.js 14 · React 18 · Zustand · Tailwind             │
@@ -153,20 +153,24 @@ Open http://localhost:3000
 
 ```bash
 npm run test:py    # 64 offline assertions over the safety-critical functions
-npm run eval       # end-to-end against the real Nominatim/Overpass APIs
+npm run eval       # 7 correctness properties, end-to-end against the real APIs
 npx tsc --noEmit   # type check
 npm run build      # production build
 ```
 
-The eval reports upstream outages as `SKIP`. Overpass allows two slots per IP
-and is regularly saturated, so a network failure is never mistaken for a
-regression.
+The eval checks seven properties against live Nominatim and Overpass: dietary
+enforcement, determinism, location resolution, absence of fabricated fields,
+that a bad location is an error rather than an empty result, that unenforceable
+needs are surfaced, and that confidence is calibrated to the evidence behind it.
+
+It reports upstream outages as `SKIP`. Overpass allows two slots per IP and is
+regularly saturated, so a network failure is never mistaken for a regression.
 
 ---
 
 ## Project structure
 
-```
+```text
 api/                                 # Python backend (Vercel serverless)
 ├── recommend.py                     # entrypoint → /api/recommend
 ├── clarify.py                       # entrypoint → /api/clarify
@@ -176,7 +180,8 @@ api/                                 # Python backend (Vercel serverless)
     ├── types.py                     # domain types (camelCase = wire contract)
     ├── errors.py                    # typed discovery failures
     ├── llm_client.py                # dependency-free OpenAI client
-    ├── agent.py                     # tool-calling agent runtime
+    ├── request_context.py           # per-request id, for log correlation
+    ├── agent.py                     # tool-calling agent runtime (unused)
     ├── confidence_scorer.py         # deterministic scoring
     ├── agents/
     │   ├── pipeline.py              # orchestrator
@@ -274,6 +279,93 @@ fixtures/                            # recorded Overpass response
   unenforceable rather than silently dropped.
 - **There are no ratings, reviews or prices.** OSM has none, so none are shown —
   and none are inferred.
+
+---
+
+## Observability
+
+The same principle as the results themselves: report what actually happened,
+not a plausible summary of it.
+
+### Correlated logs
+
+Every log line carries the id of the request that produced it:
+
+```text
+14:07:49,458 WARNING [bd2faa7f] api._lib.agents.dietary_intent: LLM unavailable, falling back
+14:07:58,865 INFO    [bd2faa7f] httpx: HTTP Request: POST https://overpass.kumi.systems/... "200 OK"
+14:07:58,885 INFO    [bd2faa7f] api._lib.agents.pipeline: stage=restaurant_discovery status=ok elapsed_ms=9426.8
+```
+
+A search fans out across the intent agent, discovery, Overpass with its mirror
+failover, the geocoder and the cache — all of which log warnings. Without a
+correlation id there was no way, on a platform serving concurrent requests, to
+tell which search a "rung failed, widening" line belonged to.
+
+The id lives in a `ContextVar` (`api/_lib/request_context.py`), so it propagates
+into every coroutine awaited from the request. Existing log calls deep in the
+stack pick it up without being rewritten — including records from libraries like
+`httpx` that know nothing about it.
+
+### Stage timings in the response
+
+Every response carries a per-stage breakdown, on the failure and empty branches
+as well as the successful one — a search that times out is precisely the one
+whose breakdown you want:
+
+```jsonc
+"metadata": {
+  "usedLLM": false,
+  "stageTimingsMs": {
+    "dietary_intent":         0.4,
+    "restaurant_discovery": 9426.8,   // ~100% of a 9437 ms request
+    "evidence_verification":   0.3,
+    "map_generation":          0.2,
+    "recommendation":          0.3,
+    "export":                  0.4
+  }
+}
+```
+
+Evidence and scoring are timed as one bucket because they run concurrently —
+separate figures would overlap and sum to more than the wall-clock they cost.
+
+`usedLLM` reports whether intent extraction used the model or the deterministic
+fallback. The fallback returns a `ParsedIntent` shape-identical to the LLM's, so
+without this the two were indistinguishable on the wire.
+
+### Confidence calibration
+
+Eval section 7 asserts that the confidence number means what its components say
+it means. The weights sum to exactly 1.0 when a need is enforceable:
+
+```text
+overall = 0.55·strength + 0.20·recency + 0.15·coverage + 0.10·completeness
+strength ∈ {0.0, 0.8, 1.0}     only = 1.0, yes = 0.8
+recency  = 0.0 when check_date is absent
+```
+
+which makes three properties exact rather than approximate:
+
+- `overall` is the weighted mean of the four sub-scores actually reported
+- a listing with no `check_date` can never exceed **0.80**
+- one tagged `yes` rather than `only`, with no `check_date`, never exceeds **0.69**
+
+Both bounds are computed from the imported weight constants, so reweighting the
+scorer fails the check rather than silently invalidating it.
+
+The tempting assertion — that verified results outscore unverified ones — is
+**not** made, because it cannot be: everything reaching the scorer has already
+passed the hard dietary filter, so there is no unverified population. Nor is the
+dated-vs-undated comparison asserted; a complete `only`-tagged listing with no
+date can legitimately outscore a sparse `yes`-tagged one that has a recent date.
+That distribution is printed for a human to read instead:
+
+```text
+distribution        n=21 min=0.67 mean=0.78 max=1.00
+with check_date     n=13 min=0.71 mean=0.82 max=1.00
+without check_date  n=8  min=0.67 mean=0.72 max=0.80
+```
 
 ---
 
