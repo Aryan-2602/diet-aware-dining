@@ -1,12 +1,49 @@
-/* Global styles: Noto Sans (Miro board) plus Tailwind layers. */
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap');
-
+/**
+ * Global styles. Everything here is systemic -- per-component styling belongs
+ * in the component or, better, in a `ui/` primitive.
+ *
+ * The typeface is loaded by `next/font` in layout.tsx, not by an @import.
+ * The previous Google Fonts @import was a render-blocking third-party request
+ * on every page load.
+ */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  /* The canvas is declared exactly once. It used to be set on <body> in this
+     file and again on the same element in layout.tsx, with two different grey
+     scales. */
   body {
-    @apply bg-slate-50 font-['Noto_Sans',sans-serif] antialiased;
+    @apply bg-gray-50 text-gray-900 antialiased;
+  }
+
+  /**
+   * One focus ring for the entire app.
+   *
+   * `:where()` contributes zero specificity, so this reaches every interactive
+   * element in every component -- none of which had a visible focus style, and
+   * several of which cleared the UA outline without replacing it -- while
+   * still losing to any deliberate override a component cares to make.
+   */
+  :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+    @apply outline-none ring-2 ring-gray-900 ring-offset-2 ring-offset-white;
+  }
+
+  ::selection {
+    @apply bg-gray-900 text-white;
+  }
+}
+
+/* Covers the spinner, the pulse, and every transition-colors in one place,
+   rather than per-component motion-reduce: variants that get forgotten. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
