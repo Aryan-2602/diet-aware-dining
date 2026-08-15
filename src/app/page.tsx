@@ -5,8 +5,8 @@
  *
  * Screens swap via `currentPage` in the store. There is no `/results` URL;
  * a refresh always lands on "landing". Search is one blocking POST to the
- * Python API; the agent-step delays below are cosmetic so InterpretationView
- * can animate while that call is in flight (or after it returns).
+ * Python API, which reports no intermediate progress — so the in-flight screen
+ * shows elapsed time rather than pretending to track stages.
  */
 
 import { useState } from "react";
@@ -19,18 +19,18 @@ import { ResultsMapView } from "@/components/ResultsMapView";
 import { RestaurantDetails } from "@/components/RestaurantDetails";
 import { SavedRecentView } from "@/components/SavedRecentView";
 import { Navigation } from "@/components/Navigation";
+import { SearchX } from "lucide-react";
+import { Alert } from "@/components/ui/Alert";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { cn } from "@/lib/cn";
 import { ExternalIcon, ICON_MD, ICON_SM, LocationIcon, iconProps } from "@/lib/icons";
-import {
-  AgentName,
-  ClarificationQuestion,
-  DietaryRequest,
-} from "@/types";
+import { ClarificationQuestion, DietaryRequest } from "@/types";
 
 /** Local UI state for the in-flight search; results themselves live in the store. */
 type ProcessingState =
   | { phase: "idle" }
-  | { phase: "processing"; currentAgent: AgentName }
+  | { phase: "processing"; location?: string; controller: AbortController }
   | {
       phase: "clarification";
       questions: ClarificationQuestion[];
@@ -66,10 +66,15 @@ export default function Home() {
     allergies: string[];
     cuisinePreferences: string[];
   }) => {
+    const controller = new AbortController();
     setIsLoading(true);
     setSearchSeed(null);
     setPage("interpretation");
-    setProcessingState({ phase: "processing", currentAgent: "dietary_intent" });
+    setProcessingState({
+      phase: "processing",
+      location: data.location,
+      controller,
+    });
 
     try {
       const request: DietaryRequest = {
@@ -80,19 +85,13 @@ export default function Home() {
         cuisinePreferences: data.cuisinePreferences,
       };
 
-      // Cosmetic: the pipeline is a single POST. These delays only drive the
-      // InterpretationView stepper so the user sees "intent" then "discovery"
-      // before the response arrives.
-      const earlyAgents: AgentName[] = ["dietary_intent", "restaurant_discovery"];
-      for (const agent of earlyAgents) {
-        setProcessingState({ phase: "processing", currentAgent: agent });
-        await delay(600);
-      }
-
+      // The request goes out immediately. It used to wait behind 1.2s of
+      // animation for stages that had not run.
       const response = await fetch("/api/recommend", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(request),
+        signal: controller.signal,
       });
 
       const result = await response.json();
@@ -105,19 +104,6 @@ export default function Home() {
         });
         setPage("search");
       } else if (result.status === "complete") {
-        // Remaining steps animate after the API returns — the work is already done.
-        const lateAgents: AgentName[] = [
-          "evidence_verification",
-          "trust_confidence",
-          "map_generation",
-          "export",
-          "recommendation",
-        ];
-        for (const agent of lateAgents) {
-          setProcessingState({ phase: "processing", currentAgent: agent });
-          await delay(300);
-        }
-
         setResults(
           result.recommendations,
           result.mapData || null,
@@ -145,7 +131,9 @@ export default function Home() {
         // user was left on a blank interpretation screen with no message.
         setPage("search");
       }
-    } catch {
+    } catch (error) {
+      // A cancellation is the user's own doing, not a failure to report.
+      if ((error as Error)?.name === "AbortError") return;
       clearResults();
       setProcessingState({
         phase: "error",
@@ -164,18 +152,22 @@ export default function Home() {
   const handleClarification = async (answers: Record<string, string>) => {
     if (processingState.phase !== "clarification") return;
 
+    const originalRequest = processingState.originalRequest;
+    const controller = new AbortController();
     setIsLoading(true);
     setPage("interpretation");
-    setProcessingState({ phase: "processing", currentAgent: "restaurant_discovery" });
+    setProcessingState({
+      phase: "processing",
+      location: answers.location?.trim() || originalRequest.location,
+      controller,
+    });
 
     try {
       const response = await fetch("/api/clarify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          originalRequest: processingState.originalRequest,
-          answers,
-        }),
+        body: JSON.stringify({ originalRequest, answers }),
+        signal: controller.signal,
       });
 
       const result = await response.json();
@@ -187,7 +179,7 @@ export default function Home() {
         setProcessingState({
           phase: "clarification",
           questions: result.clarificationNeeded,
-          originalRequest: processingState.originalRequest,
+          originalRequest,
         });
         setPage("search");
         return;
@@ -203,18 +195,6 @@ export default function Home() {
         return;
       }
 
-      const remainingAgents: AgentName[] = [
-        "evidence_verification",
-        "trust_confidence",
-        "map_generation",
-        "export",
-        "recommendation",
-      ];
-      for (const agent of remainingAgents) {
-        setProcessingState({ phase: "processing", currentAgent: agent });
-        await delay(300);
-      }
-
       const recommendations = Array.isArray(result.recommendations)
         ? result.recommendations
         : [];
@@ -225,10 +205,11 @@ export default function Home() {
         result.metadata,
         result.meta
       );
-      addRecentSearch(processingState.originalRequest, recommendations.length);
+      addRecentSearch(originalRequest, recommendations.length);
       setProcessingState({ phase: "idle" });
       setPage("results");
-    } catch {
+    } catch (error) {
+      if ((error as Error)?.name === "AbortError") return;
       clearResults();
       setProcessingState({
         phase: "error",
@@ -269,10 +250,13 @@ export default function Home() {
 
         {currentPage === "search" && (
           <div className="max-w-3xl mx-auto">
-            {/* The subhead restated the textarea placeholder verbatim. */}
-            <h1 className="text-2xl font-bold text-gray-900 mb-4">
-              What are you craving?
+            <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
+              Describe what you need
             </h1>
+            <p className="mb-5 mt-1 text-sm text-gray-600">
+              Plain language is fine. Include a city or address — we geocode it
+              before searching.
+            </p>
 
             {processingState.phase === "clarification" ? (
               <ClarificationDialog
@@ -293,29 +277,37 @@ export default function Home() {
             )}
 
             {processingState.phase === "error" && (
-              <div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">
+              <Alert tone="danger" className="mt-4">
                 {processingState.message}
-              </div>
+              </Alert>
             )}
           </div>
         )}
 
         {currentPage === "interpretation" &&
           (processingState.phase === "processing" ? (
-            <InterpretationView currentAgent={processingState.currentAgent} />
+            <InterpretationView
+              location={processingState.location}
+              onCancel={() => {
+                processingState.controller.abort();
+                setProcessingState({ phase: "idle" });
+                setIsLoading(false);
+                setPage("search");
+              }}
+            />
           ) : (
             // Without this branch, any state where the page is "interpretation"
             // but processing has ended renders an empty <main> between the
             // header and footer. Today React batching usually hides it.
-            <div className="text-center py-20">
-              <p className="text-gray-500 mb-4">Nothing is running right now.</p>
-              <button
-                onClick={() => setPage("search")}
-                className="px-6 py-2.5 text-primary-600 font-semibold hover:bg-primary-50 rounded-full transition-colors border border-primary-200"
-              >
-                Start a search
-              </button>
-            </div>
+            <EmptyState
+              icon={SearchX}
+              title="Nothing is running right now"
+              action={
+                <Button variant="primary" onClick={() => setPage("search")}>
+                  Start a search
+                </Button>
+              }
+            />
           ))}
 
         {currentPage === "results" && <ResultsMapView />}
@@ -382,7 +374,3 @@ function NavLink({ active, onClick, children }: { active: boolean; onClick: () =
   );
 }
 
-/** Used only to pace the interpretation stepper — not a real agent wait. */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}

@@ -35,6 +35,19 @@
   }
 }
 
+@layer utilities {
+  /* Indeterminate progress: the sliver crosses the track, because a search's
+     duration genuinely is not known ahead of time. */
+  @keyframes loading {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(300%);
+    }
+  }
+}
+
 /* Covers the spinner, the pulse, and every transition-colors in one place,
    rather than per-component motion-reduce: variants that get forgotten. */
 @media (prefers-reduced-motion: reduce) {
