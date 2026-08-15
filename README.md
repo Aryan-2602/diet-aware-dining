@@ -1,9 +1,9 @@
 # Dietary Maps AI
 
-Restaurant search for people with dietary constraints, filtered on real
-OpenStreetMap data. A Python (FastAPI) agent pipeline behind a Next.js
-frontend — and it only shows restaurants whose dietary tags it can actually
-verify.
+A **multi-agent AI system** for restaurant search under dietary preferences,
+allergies, and food restrictions. A Python (FastAPI) **multi-agent pipeline**
+behind a Next.js frontend, filtered on live OpenStreetMap `diet:*` tags — and
+it only shows restaurants whose dietary tags it can actually verify.
 
 > "Halal food with gluten-free options near USC" → real restaurants,
 > confidence-scored, with the evidence behind every match.
@@ -31,15 +31,22 @@ Everything below follows from that.
 
 ## Features
 
-- **Natural-language search** — describe needs in plain English ("vegan sushi
-  near downtown").
-- **Live OpenStreetMap data** — fetched per search via the Overpass API.
+- **Multi-agent pipeline** — eight stages: three LLM agents (dietary intent,
+  clarification, recommendation copy) plus deterministic discovery, evidence
+  verification, and confidence scoring, coordinated by a tool-calling agent
+  runtime with a deterministic fallback when `OPENAI_API_KEY` is unset.
+- **Natural-language search** — describe dietary preferences, allergies, and
+  food restrictions in plain English ("vegan sushi near downtown").
+- **Live OpenStreetMap data** — fetched per search via the Overpass API;
+  Nominatim geocoding turns a place name into coordinates.
 - **Hard dietary filtering** — the requirement is in the Overpass query itself
   and re-asserted after parsing, so an unverified place cannot reach the results.
 - **Evidence for every match** — each result quotes the OSM tag it relied on and
   links to the exact mapped object so you can check it yourself.
 - **Deterministic confidence scoring** — no random component; the same input
   always scores the same.
+- **Google Maps directions** — one-click deep link from any result (client-side,
+  no API key).
 - **Honest failure modes** — an outage, an ambiguous location and a genuinely
   empty result set are three different states with three different screens.
 - **Degrades gracefully** — Nominatim, Overpass and OSM are free and keyless.
@@ -61,7 +68,7 @@ Everything below follows from that.
 ┌────────────────────────────▼────────────────────────────┐
 │  Python serverless functions (FastAPI, api/*.py)        │
 │  ┌────────────────────────────────────────────────────┐ │
-│  │  AgentPipeline (api/_lib/agents/pipeline.py)       │ │
+│  │  AgentPipeline orchestrator (pipeline.py)          │ │
 │  │                                                    │ │
 │  │  1. DietaryIntentAgent      LLM   NL → intent      │ │
 │  │  2. ClarificationAgent      LLM   ask if blocked   │ │
@@ -85,9 +92,11 @@ Everything below follows from that.
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Three of the eight stages use an LLM.** The split is deliberate: the model
-decides strategy, code enforces dietary safety. Anything that changes *which*
-restaurants a person sees is deterministic and reproducible.
+The **multi-agent pipeline orchestrator** (`AgentPipeline` in
+`api/_lib/agents/pipeline.py`) runs those eight stages. **Three of them use an
+LLM.** The split is deliberate: the model decides strategy, code enforces
+dietary safety. Anything that changes *which* restaurants a person sees is
+deterministic and reproducible.
 
 ---
 
@@ -220,7 +229,7 @@ fixtures/                            # recorded Overpass response
 
 ---
 
-## Pipeline detail
+## Multi-agent pipeline
 
 1. **DietaryIntentAgent** *(LLM)* — extracts dietary needs, allergies, cuisine
    and location, constrained to a controlled vocabulary and validated field by
@@ -332,6 +341,7 @@ one.
 | Styling | Tailwind CSS, lucide-react |
 | State | Zustand (persisted) |
 | Backend | Python 3.12, FastAPI |
+| Architecture | Multi-agent pipeline (LLM agents + deterministic services) |
 | Data | OpenStreetMap via Overpass API + Nominatim |
 | Cache | Vercel KV / Upstash Redis (optional) |
 | Deployment | Vercel — static frontend + Python serverless functions |
