@@ -25,9 +25,46 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .agents.pipeline import AgentPipeline
+from .request_context import get_request_id, new_request_id, set_request_id
 from .types import DietaryRequest, parsed_intent_to_json
 
-logging.basicConfig(level=logging.INFO)
+LOG_FORMAT = "%(asctime)s %(levelname)s [%(request_id)s] %(name)s: %(message)s"
+
+
+class _RequestIdFormatter(logging.Formatter):
+    """Stamps every record with the current request id.
+
+    A Formatter rather than a Filter: a format string containing
+    ``%(request_id)s`` raises on any record that lacks the attribute, and plenty
+    of records come from libraries that know nothing about it -- httpx, uvicorn,
+    asyncio. Supplying the default here makes that impossible rather than
+    relying on a filter being attached to every handler that might see one.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        if not hasattr(record, "request_id"):
+            record.request_id = get_request_id()
+        return super().format(record)
+
+
+def _configure_logging() -> None:
+    """Install the correlating formatter on whatever handlers exist.
+
+    Deliberately not ``basicConfig(format=...)``: basicConfig is a no-op once the
+    root logger has handlers, which is exactly the case under uvicorn -- so the
+    format would silently not apply in the environment that matters. ``force=True``
+    would work but tears down uvicorn's own handlers with it.
+    """
+    logging.basicConfig(level=logging.INFO)
+    root = logging.getLogger()
+    if not root.handlers:
+        root.addHandler(logging.StreamHandler())
+    for handler in root.handlers:
+        handler.setFormatter(_RequestIdFormatter(LOG_FORMAT))
+
+
+_configure_logging()
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Diet Aware Dining API", docs_url=None, redoc_url=None)
 
@@ -54,9 +91,23 @@ class ClarifyBody(BaseModel):
     answers: Optional[dict[str, str]] = None
 
 
+def _instrumentation(pipeline: AgentPipeline) -> dict[str, Any]:
+    """Per-request instrumentation, emitted on every branch.
+
+    Included on the failure and empty branches too, not just "complete" -- a
+    search that times out after 40s is precisely the one whose stage breakdown
+    you want, and that branch carries no metadata at all otherwise.
+    """
+    return {
+        "stageTimingsMs": pipeline.state.stageTimingsMs,
+        "usedLLM": pipeline.state.usedLLM,
+    }
+
+
 def _respond(pipeline: AgentPipeline) -> JSONResponse:
     state = pipeline.state
     meta = pipeline.meta.to_json() if pipeline.meta else None
+    instrumentation = _instrumentation(pipeline)
 
     if state.status == "awaiting_clarification":
         return JSONResponse(
@@ -66,6 +117,7 @@ def _respond(pipeline: AgentPipeline) -> JSONResponse:
                     q.to_json() for q in (state.clarificationNeeded or [])
                 ],
                 "parsedIntent": parsed_intent_to_json(state.parsedIntent),
+                "metadata": instrumentation,
             }
         )
 
@@ -78,6 +130,7 @@ def _respond(pipeline: AgentPipeline) -> JSONResponse:
                 "code": code,
                 "message": state.error or "Something went wrong",
                 "parsedIntent": parsed_intent_to_json(state.parsedIntent),
+                "metadata": instrumentation,
             },
             status_code=status,
         )
@@ -90,6 +143,7 @@ def _respond(pipeline: AgentPipeline) -> JSONResponse:
                 "recommendations": [],
                 "parsedIntent": parsed_intent_to_json(state.parsedIntent),
                 "meta": meta,
+                "metadata": instrumentation,
             }
         )
 
@@ -114,6 +168,7 @@ def _respond(pipeline: AgentPipeline) -> JSONResponse:
                 "candidatesScanned": (meta or {}).get("candidatesScanned", 0),
                 "verified": len([e for e in state.evidence if e.verified]),
                 "avgConfidence": avg,
+                **instrumentation,
             },
         }
     )
@@ -141,6 +196,14 @@ async def recommend(body: RecommendBody) -> Any:
             status_code=400,
         )
 
+    set_request_id(new_request_id())
+    logger.info(
+        "POST /api/recommend query_len=%d location=%r needs=%s",
+        len(body.query),
+        body.location,
+        body.dietaryPreferences,
+    )
+
     pipeline = AgentPipeline()
     await pipeline.run(_to_request(body))
     return _respond(pipeline)
@@ -157,6 +220,9 @@ async def clarify(body: ClarifyBody) -> Any:
             },
             status_code=400,
         )
+
+    set_request_id(new_request_id())
+    logger.info("POST /api/clarify answered=%s", sorted(body.answers.keys()))
 
     answers = body.answers
     original = _to_request(body.originalRequest)

@@ -11,8 +11,11 @@ internally, so there is no separate "too few results" stage.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Iterator, Literal, Optional
 
 from ..confidence_scorer import score_restaurants
 from ..errors import DiscoveryError
@@ -36,6 +39,8 @@ from .discovery import RestaurantDiscoveryAgent
 from .evidence_verification import EvidenceVerificationAgent
 from .recommendation import RecommendationAgent
 
+logger = logging.getLogger(__name__)
+
 PipelineStatus = Literal[
     "idle", "processing", "awaiting_clarification", "complete", "error"
 ]
@@ -55,6 +60,12 @@ class PipelineState:
     mapData: Optional[MapData] = None
     exportResult: Optional[ExportResult] = None
     error: Optional[str] = None
+    #: Wall-clock per stage, in milliseconds. Recorded even when a stage
+    #: raises -- a slow failure is the case most worth measuring.
+    stageTimingsMs: dict[str, float] = field(default_factory=dict)
+    #: Whether intent extraction used the LLM or the deterministic fallback.
+    #: None until the intent stage has run.
+    usedLLM: Optional[bool] = None
 
 
 class AgentPipeline:
@@ -74,6 +85,31 @@ class AgentPipeline:
         #: Set when the failure was an upstream service rather than a bad request.
         self.error_code: Optional[str] = None
 
+    @contextmanager
+    def _timed(self, stage: str) -> Iterator[None]:
+        """Records how long a stage took, and logs it.
+
+        try/finally rather than a plain before/after pair so the timing survives
+        an exception -- the slow failures are exactly the ones worth measuring,
+        and ``resume_with_clarification`` has no try/except of its own, so a
+        DiscoveryError propagates straight out of it.
+
+        The stage is re-raised untouched; this observes, it does not handle.
+        """
+        start = time.perf_counter()
+        status = "ok"
+        try:
+            yield
+        except BaseException:
+            status = "error"
+            raise
+        finally:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            self.state.stageTimingsMs[stage] = round(elapsed_ms, 1)
+            logger.info(
+                "stage=%s status=%s elapsed_ms=%.1f", stage, status, elapsed_ms
+            )
+
     async def run(self, request: DietaryRequest) -> list[Recommendation]:
         """Run the pipeline from scratch.
 
@@ -86,14 +122,19 @@ class AgentPipeline:
             self.state.error = None
 
             self.state.currentAgent = "dietary_intent"
-            intent = await self._intent_agent.process(request)
+            with self._timed("dietary_intent"):
+                intent = await self._intent_agent.process(request)
+            # Which extraction path ran is only knowable from the agent; the
+            # ParsedIntent it returns is shape-identical either way.
+            self.state.usedLLM = self._intent_agent.used_llm
             self.state.parsedIntent = intent
 
             # A missing location is as blocking as an ambiguous one -- without
             # it there is nothing to geocode.
             if intent.isLocationAmbiguous or not intent.location.strip():
                 self.state.currentAgent = "clarification"
-                questions = await self._clarification_agent.process(intent)
+                with self._timed("clarification"):
+                    questions = await self._clarification_agent.process(intent)
                 if questions:
                     self.state.status = "awaiting_clarification"
                     self.state.clarificationNeeded = questions
@@ -152,7 +193,8 @@ class AgentPipeline:
         # Discovery raises a typed DiscoveryError rather than returning [] when
         # geocoding or Overpass fails.
         self.state.currentAgent = "restaurant_discovery"
-        discovery = await self._discovery_agent.process(intent)
+        with self._timed("restaurant_discovery"):
+            discovery = await self._discovery_agent.process(intent)
         restaurants = discovery.restaurants
         enforceable = discovery.enforceableNeeds
         unenforceable = discovery.unenforceableNeeds
@@ -169,14 +211,17 @@ class AgentPipeline:
 
         # Evidence and scoring are independent, so they run concurrently.
         self.state.currentAgent = "evidence_verification"
-        evidence, scores = await asyncio.gather(
-            self._evidence_agent.process(
-                restaurants, intent, enforceable, unenforceable
-            ),
-            _as_coroutine(
-                score_restaurants(restaurants, enforceable, intent.dietaryNeeds)
-            ),
-        )
+        # Timed as one bucket, not two: these overlap, so separate figures would
+        # sum to more than the wall-clock they actually cost.
+        with self._timed("evidence_verification"):
+            evidence, scores = await asyncio.gather(
+                self._evidence_agent.process(
+                    restaurants, intent, enforceable, unenforceable
+                ),
+                _as_coroutine(
+                    score_restaurants(restaurants, enforceable, intent.dietaryNeeds)
+                ),
+            )
         self.state.evidence = evidence
         self.state.confidenceScores = scores
 
@@ -186,19 +231,22 @@ class AgentPipeline:
 
         self.state.currentAgent = "map_generation"
         confidence_map = {s.restaurantId: s.overall for s in scores}
-        self.state.mapData = await self._map_service.process(
-            restaurants, confidence_map
-        )
+        with self._timed("map_generation"):
+            self.state.mapData = await self._map_service.process(
+                restaurants, confidence_map
+            )
 
         self.state.currentAgent = "recommendation"
-        recommendations = await self._recommendation_agent.process(
-            restaurants, scores, evidence, intent, enforceable, unenforceable
-        )
+        with self._timed("recommendation"):
+            recommendations = await self._recommendation_agent.process(
+                restaurants, scores, evidence, intent, enforceable, unenforceable
+            )
 
         self.state.currentAgent = "export"
-        self.state.exportResult = await self._export_service.process(
-            recommendations, "json"
-        )
+        with self._timed("export"):
+            self.state.exportResult = await self._export_service.process(
+                recommendations, "json"
+            )
 
         self.state.recommendations = recommendations
         self.state.status = "complete"

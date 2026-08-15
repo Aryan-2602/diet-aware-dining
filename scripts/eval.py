@@ -20,6 +20,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from api._lib.agents.pipeline import AgentPipeline  # noqa: E402
+from api._lib.confidence_scorer import (  # noqa: E402
+    WEIGHT_COVERAGE,
+    WEIGHT_DATA_COMPLETENESS,
+    WEIGHT_DIET_TAG_STRENGTH,
+    WEIGHT_TAG_RECENCY,
+)
 from api._lib.tools.diet_tags import matches_all_needs, partition_needs  # noqa: E402
 from api._lib.types import DietaryRequest  # noqa: E402
 
@@ -79,6 +85,139 @@ async def run(query: str, **kwargs) -> AgentPipeline:
     pipeline = AgentPipeline()
     await pipeline.run(DietaryRequest(query=query, **kwargs))
     return pipeline
+
+
+# --- confidence calibration ------------------------------------------------
+#
+# The obvious property -- "verified results outscore unverified ones" -- cannot
+# be asserted, because there is no unverified population: score_restaurant()
+# takes no Evidence at all, and everything reaching the scorer has already
+# passed the hard dietary filter. So the assertions below are the ones the
+# weights actually make true, and every bound is computed from the imported
+# WEIGHT_* constants rather than hardcoded -- reweighting the scorer must fail
+# this section rather than silently invalidate it.
+
+#: Weakest positive OSM tagging: `yes` (some options) rather than `only`.
+STRENGTH_YES = 0.8
+
+
+def _weighted(strength: float, recency: float, coverage: float, completeness: float) -> float:
+    """The scorer's own formula, for the enforceable-needs branch."""
+    total = (
+        WEIGHT_DIET_TAG_STRENGTH
+        + WEIGHT_TAG_RECENCY
+        + WEIGHT_COVERAGE
+        + WEIGHT_DATA_COMPLETENESS
+    )
+    return (
+        strength * WEIGHT_DIET_TAG_STRENGTH
+        + recency * WEIGHT_TAG_RECENCY
+        + coverage * WEIGHT_COVERAGE
+        + completeness * WEIGHT_DATA_COMPLETENESS
+    ) / total
+
+
+#: A listing nobody has ever check_date'd scores 0 for recency, so however
+#: perfect the rest of it is, it cannot reach the top of the scale.
+CEILING_NO_CHECK_DATE = _weighted(1.0, 0.0, 1.0, 1.0)
+#: ...and if its tag is merely `yes`, the ceiling drops further.
+CEILING_YES_NO_CHECK_DATE = _weighted(STRENGTH_YES, 0.0, 1.0, 1.0)
+
+
+def _distribution(scores: list[float]) -> str:
+    if not scores:
+        return "no results"
+    return (
+        f"n={len(scores)} min={min(scores):.2f} "
+        f"mean={sum(scores) / len(scores):.2f} max={max(scores):.2f}"
+    )
+
+
+async def check_calibration() -> None:
+    """Assert the confidence number means what its components say it means."""
+    global skipped
+
+    queries = [
+        "vegan restaurants in Seattle",
+        "vegan and gluten-free food in Seattle",
+        "halal food near Los Angeles",
+    ]
+
+    inconsistent: list[str] = []
+    over_ceiling: list[str] = []
+    over_yes_ceiling: list[str] = []
+    all_overall: list[float] = []
+    dated: list[float] = []
+    undated: list[float] = []
+    scored_any = False
+
+    for query in queries:
+        pipeline = await run(query)
+        if skip_if_not_complete(query, pipeline):
+            continue
+
+        meta = pipeline.meta
+        # Every bound below is derived from the enforceable-needs branch of
+        # score_restaurant. With no enforceable need the strength term is
+        # dropped and the remaining weights renormalise, so the arithmetic is
+        # different and these assertions would not apply.
+        if not (meta and meta.enforceableNeeds):
+            skipped += 1
+            print(f"  SKIP  {query} -- no enforceable needs, different scoring branch")
+            continue
+
+        scored_any = True
+        for rec in pipeline.state.recommendations:
+            c = rec.confidence
+            all_overall.append(c.overall)
+            (dated if c.tagRecency > 0 else undated).append(c.overall)
+
+            expected = _weighted(
+                c.dietTagStrength, c.tagRecency, c.coverage, c.dataCompleteness
+            )
+            # _round in the scorer is round(v * 100) / 100, so allow one step.
+            if abs(expected - c.overall) > 0.011:
+                inconsistent.append(
+                    f"{rec.restaurant.name}: reported {c.overall:.2f}, "
+                    f"components give {expected:.2f}"
+                )
+
+            if c.tagRecency == 0:
+                if c.overall > CEILING_NO_CHECK_DATE + 0.011:
+                    over_ceiling.append(f"{rec.restaurant.name} {c.overall:.2f}")
+                if (
+                    c.dietTagStrength <= STRENGTH_YES
+                    and c.overall > CEILING_YES_NO_CHECK_DATE + 0.011
+                ):
+                    over_yes_ceiling.append(f"{rec.restaurant.name} {c.overall:.2f}")
+
+    if not scored_any:
+        print("  SKIP  calibration -- no query produced a scorable result set")
+        return
+
+    check(
+        "overall is the weighted mean of its own sub-scores",
+        not inconsistent,
+        "; ".join(inconsistent[:3]) or f"{len(all_overall)} results",
+    )
+    check(
+        f"no unchecked listing exceeds {CEILING_NO_CHECK_DATE:.2f}",
+        not over_ceiling,
+        "; ".join(over_ceiling[:3]) or f"{len(undated)} without a check date",
+    )
+    check(
+        f'no unchecked "yes"-tagged listing exceeds {CEILING_YES_NO_CHECK_DATE:.2f}',
+        not over_yes_ceiling,
+        "; ".join(over_yes_ceiling[:3]) or "none over",
+    )
+
+    # Printed, not asserted. Attestation ought to raise confidence, but it is
+    # not guaranteed: a complete, `only`-tagged listing with no check date can
+    # legitimately outscore a sparse `yes`-tagged one that has a recent date.
+    # Asserting it would be asserting a tendency, which is how evals get flaky.
+    print(f"        distribution  {_distribution(all_overall)}")
+    print(f"        with check_date     {_distribution(dated)}")
+    print(f"        without check_date  {_distribution(undated)}")
 
 
 async def main() -> None:
@@ -205,6 +344,10 @@ async def main() -> None:
             '"vegan" is still enforced',
             bool(meta and "vegan" in meta.enforceableNeeds),
         )
+
+    # 7. Confidence is calibrated to the evidence
+    print("\n=== 7. Confidence reflects the evidence behind it ===")
+    await check_calibration()
 
     print(
         f"\n{passed} passed, {failed} failed, "

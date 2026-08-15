@@ -76,17 +76,32 @@ LOCATION_PATTERNS = [
 
 
 class DietaryIntentAgent:
+    def __init__(self) -> None:
+        #: Which path served the most recent process() call. Instance state is
+        #: safe because http.py builds a fresh AgentPipeline -- and so a fresh
+        #: agent -- per request, so there is nothing to leak between them.
+        #: None until process() has run.
+        self.used_llm: Optional[bool] = None
+
     async def process(self, request: DietaryRequest) -> ParsedIntent:
         """Parse free text into ParsedIntent; keyword/regex fallback if the LLM is down."""
         try:
-            return await self._process_with_llm(request)
+            intent = await self._process_with_llm(request)
         except LLMUnavailableError as error:
+            # Previously this was the only trace that the fallback had run: the
+            # ParsedIntent it returns is shape-identical to the LLM's, so a
+            # response gave no indication which produced it.
+            self.used_llm = False
             logger.warning(
                 "[DietaryIntentAgent] LLM extraction unavailable, falling back "
                 "to rule-based parser: %s",
                 error,
             )
             return self._process_with_rules(request)
+
+        self.used_llm = True
+        logger.info("[DietaryIntentAgent] intent extracted via LLM")
+        return intent
 
     # -- vocabulary hygiene ------------------------------------------------
 
