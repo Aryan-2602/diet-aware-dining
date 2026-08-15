@@ -7,6 +7,11 @@
  */
 import { useState } from "react";
 import { ClarificationQuestion } from "@/types";
+import { Button } from "./ui/Button";
+import { Card } from "./ui/Card";
+import { Field, Input } from "./ui/Field";
+import { cn } from "@/lib/cn";
+import { ICON_LG, ICON_SM, UnverifiableIcon, VerifiedIcon, iconProps } from "@/lib/icons";
 
 interface ClarificationDialogProps {
   questions: ClarificationQuestion[];
@@ -32,95 +37,106 @@ export function ClarificationDialog({
     onSubmit(answers);
   };
 
+  const incomplete = questions.some((q) => !answers[q.field]?.trim());
+
   return (
-    <div className="w-full max-w-2xl mx-auto">
-      <div className="bg-white rounded-2xl shadow-lg p-6 border-l-4 border-amber-400">
-        <div className="flex items-center gap-2 mb-4">
-          <svg
-            className="w-5 h-5 text-amber-500"
-            fill="currentColor"
-            viewBox="0 0 20 20"
-            aria-hidden="true"
-          >
-            <path
-              fillRule="evenodd"
-              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-              clipRule="evenodd"
-            />
-          </svg>
-          <h3 className="text-lg font-semibold text-gray-800">
+    <div className="mx-auto w-full max-w-2xl">
+      <Card className="border-l-2 border-l-caution-500">
+        <div className="mb-4 flex items-center gap-2">
+          <UnverifiableIcon size={ICON_LG} className="text-caution-600" {...iconProps} />
+          <h2 className="text-lg font-semibold tracking-tight text-gray-900">
             Need a bit more info
-          </h3>
+          </h2>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {questions.map((q) => (
-            <div key={q.field}>
-              <label
-                htmlFor={`clarify-${q.field}`}
-                className="block text-sm font-medium text-gray-700 mb-2"
-              >
+            // A fieldset, because when options render the question labels a
+            // group of controls rather than one input. The old <label> pointed
+            // at an id that only existed in the free-text branch.
+            <fieldset key={q.field}>
+              <legend className="mb-2 text-sm font-medium text-gray-700">
                 {q.question}
-              </label>
+              </legend>
 
               {q.options ? (
                 <div className="flex flex-wrap gap-2">
-                  {q.options.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() =>
-                        handleAnswer(q.field, option.toLowerCase())
-                      }
-                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                        answers[q.field] === option.toLowerCase()
-                          ? "bg-primary-500 text-white"
-                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                      }`}
-                    >
-                      {option}
-                    </button>
-                  ))}
+                  {q.options.map((option) => {
+                    const value = option.toLowerCase();
+                    const checked = answers[q.field] === value;
+                    return (
+                      // Real radios: arrow-key navigation, group semantics and
+                      // a announced selected state come free. The previous
+                      // chips were plain buttons with no aria-pressed.
+                      <label
+                        key={option}
+                        className={cn(
+                          "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors",
+                          "has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-gray-900 has-[:focus-visible]:ring-offset-2",
+                          checked
+                            ? "border-gray-900 bg-gray-900 text-white"
+                            : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name={q.field}
+                          value={value}
+                          checked={checked}
+                          onChange={() => handleAnswer(q.field, value)}
+                          className="sr-only"
+                        />
+                        {checked && <VerifiedIcon size={ICON_SM} {...iconProps} />}
+                        {option}
+                      </label>
+                    );
+                  })}
                 </div>
               ) : (
-                <input
-                  id={`clarify-${q.field}`}
-                  type="text"
-                  value={answers[q.field] || ""}
-                  onChange={(e) => handleAnswer(q.field, e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none"
-                  placeholder="Type your answer..."
-                />
+                <Field label={q.question} labelHidden>
+                  {(field) => (
+                    <Input
+                      {...field}
+                      type="text"
+                      value={answers[q.field] || ""}
+                      onChange={(e) => handleAnswer(q.field, e.target.value)}
+                      placeholder="Type your answer..."
+                    />
+                  )}
+                </Field>
               )}
-            </div>
+            </fieldset>
           ))}
 
           <div className="flex items-center gap-3">
-            <button
+            <Button
               type="submit"
+              variant="primary"
               // Every question must be answered. Submitting a partial set sends
               // the search back unchanged, which is how users ended up looping
               // through the same question.
-              disabled={questions.some((q) => !answers[q.field]?.trim())}
-              className="flex-1 py-3 px-6 bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 text-white font-semibold rounded-xl transition-colors"
+              disabled={incomplete}
+              className="flex-1"
             >
-              Continue Search
-            </button>
+              Continue search
+            </Button>
             {onCancel && (
               // The only way out used to be answering — and the answer could be
               // another question. Navigating away and back re-opened the dialog,
               // because the processing state was never reset.
-              <button
-                type="button"
-                onClick={onCancel}
-                className="py-3 px-6 text-gray-600 hover:text-gray-900 font-medium rounded-xl hover:bg-gray-100 transition-colors"
-              >
+              <Button type="button" variant="ghost" onClick={onCancel}>
                 Cancel
-              </button>
+              </Button>
             )}
           </div>
+          {/* A disabled button with no explanation reads as broken. */}
+          {incomplete && (
+            <p className="text-xs text-gray-500">
+              Answer every question to continue.
+            </p>
+          )}
         </form>
-      </div>
+      </Card>
     </div>
   );
 }

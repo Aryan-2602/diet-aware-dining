@@ -3,9 +3,62 @@
 /**
  * Marketing landing. CTAs call `setPage("search")` / `setPage("saved")` —
  * still the same Next.js route.
+ *
+ * Copy here is held to the same standard as the results: it may only claim
+ * what the pipeline actually does. Earlier versions advertised "Our AI
+ * validates menus" and "menu evidence and certification checks", neither of
+ * which exists — `menuConfirmed` is hardcoded false at every construction site
+ * in api/_lib/agents/evidence_verification.py, because OpenStreetMap never
+ * confirms a menu. An app that refuses to guess about someone's dietary needs
+ * cannot open by overstating what it checked.
  */
+import { ArrowUpRight, Gauge, Globe, ShieldCheck } from "lucide-react";
 import { useAppStore } from "@/store";
 import { EXAMPLE_PROMPTS } from "@/lib/prompts";
+import { Button } from "./ui/Button";
+import { Card } from "./ui/Card";
+import { ICON_LG, ICON_SM, iconProps } from "@/lib/icons";
+
+const PIPELINE_STEPS = [
+  {
+    title: "Read your request",
+    desc: "Pulls out dietary needs, cuisine, location and constraints from plain language.",
+  },
+  {
+    title: "Geocode the location",
+    desc: "Resolves your city or address to coordinates via Nominatim.",
+  },
+  {
+    title: "Search OpenStreetMap",
+    desc: "Queries Overpass for places tagged with the diet:* keys your needs map to.",
+  },
+  {
+    title: "Check the tags",
+    desc: "Re-asserts every dietary filter against the returned tags, and says so when a need has no tag at all.",
+  },
+  {
+    title: "Score and rank",
+    desc: "Weighs tag strength, coverage, how recently a mapper confirmed it, and listing completeness.",
+  },
+];
+
+const TRUST_POINTS = [
+  {
+    Icon: ShieldCheck,
+    title: "Filtered, not guessed",
+    desc: "A place only appears if its OpenStreetMap diet:* tags satisfy every need we can express as a tag.",
+  },
+  {
+    Icon: Gauge,
+    title: "Scores you can audit",
+    desc: "Every match shows its evidence, its confidence breakdown, and a link to the exact OSM object.",
+  },
+  {
+    Icon: Globe,
+    title: "Anywhere OSM is mapped",
+    desc: "Useful for dietary constraints in unfamiliar cities, with the same rules everywhere.",
+  },
+];
 
 /** Hero, how-it-works, and trust sections; navigates via `setPage`. */
 export function LandingPage() {
@@ -20,139 +73,122 @@ export function LandingPage() {
 
   return (
     <div className="space-y-16">
-      {/* Hero Section */}
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center py-8">
-        <div>
-          <h1 className="text-4xl lg:text-5xl font-bold text-gray-900 leading-tight mb-4">
-            Find restaurants that{" "}
-            <span className="text-primary-500">truly match</span> your dietary
-            needs.
-          </h1>
-          <p className="text-lg text-gray-500 mb-8 max-w-lg">
-            Tell us what you need in plain language. Our AI validates menus,
-            scores confidence, and opens directions in Google Maps — instantly.
-          </p>
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() => setPage("search")}
-              className="px-8 py-3 bg-primary-500 hover:bg-primary-600 text-white font-semibold rounded-full transition-colors text-base"
-            >
-              Start Searching Now
-            </button>
-            <button
-              onClick={() => setPage("saved")}
-              className="px-8 py-3 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-full border border-gray-200 transition-colors text-base"
-            >
-              Recent & Saved
-            </button>
-          </div>
-        </div>
-
-        {/* Demo Preview */}
-        <div className="bg-gray-900 rounded-2xl p-6 shadow-2xl">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-2.5 h-2.5 rounded-full bg-primary-500" />
-            <span className="text-sm font-bold text-white">Dietary Maps AI</span>
-          </div>
-          <div className="bg-gray-800 rounded-lg px-4 py-4 mb-4">
-            <p className="text-sm text-gray-300">
-              {`"Halal food with gluten-free options near USC"`}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-6 h-6 rounded-full bg-primary-500 flex items-center justify-center">
-              <svg className="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <span className="text-sm text-gray-200">
-              3 restaurants found • 92% confidence
-            </span>
-          </div>
-          <div className="bg-gray-800 rounded-lg h-32 flex items-center justify-center">
-            <span className="text-gray-500 text-sm">🗺️ Map Preview</span>
-          </div>
+      {/* Hero. Single column: the old two-column layout's right half was a
+          mock product screenshot with an invented "92% confidence" stat over a
+          🗺️ placeholder — fabricated data on the first screen of an app whose
+          selling point is not fabricating data. */}
+      <section className="max-w-2xl py-8">
+        <h1 className="text-3xl font-semibold leading-tight tracking-tight text-gray-900 sm:text-4xl">
+          Find restaurants that match your dietary needs.
+        </h1>
+        <p className="mt-4 text-lg text-gray-600">
+          Describe what you need in plain language. We filter OpenStreetMap&apos;s
+          community dietary tags, show the evidence behind every match, and hand
+          off to Google Maps.
+        </p>
+        <div className="mt-8 flex flex-wrap gap-3">
+          <Button variant="primary" onClick={() => setPage("search")}>
+            Start searching
+          </Button>
+          <Button variant="secondary" onClick={() => setPage("saved")}>
+            Recent &amp; saved
+          </Button>
         </div>
       </section>
 
       {/* Try Natural Language */}
       <section>
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">
+        <h2 className="mb-4 text-xl font-semibold tracking-tight text-gray-900">
           Try natural language requests
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           {EXAMPLE_PROMPTS.map((example) => (
             <button
               key={example}
               onClick={() => startSearchWith(example)}
-              className="text-left px-5 py-4 bg-primary-50 border border-primary-200 rounded-xl text-sm text-gray-700 hover:bg-primary-100 hover:border-primary-300 transition-colors"
+              className="group flex items-start justify-between gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 text-left text-sm text-gray-700 transition-colors hover:border-gray-300 hover:text-gray-900"
             >
-              {`"${example}"`}
+              {example}
+              <ArrowUpRight
+                size={ICON_SM}
+                className="mt-0.5 shrink-0 text-gray-300 transition-colors group-hover:text-gray-500"
+                {...iconProps}
+              />
             </button>
           ))}
         </div>
       </section>
 
-      {/* How the AI Works */}
-      <section className="bg-white rounded-2xl p-8 lg:p-12 shadow-sm border border-gray-100">
-        <h2 className="text-2xl font-bold text-gray-900 mb-8 text-center">
-          How the AI works
+      {/* What a search actually does */}
+      <section>
+        <h2 className="mb-6 text-xl font-semibold tracking-tight text-gray-900">
+          What a search actually does
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-          {[
-            { step: 1, title: "Understand your request", desc: "Parses dietary needs, cuisine, location, and constraints" },
-            { step: 2, title: "Discover restaurants", desc: "Searches nearby options via OpenStreetMap data" },
-            { step: 3, title: "Validate dietary evidence", desc: "Checks menus, tags, and certifications for proof" },
-            { step: 4, title: "Rank by confidence", desc: "Scores each restaurant based on evidence strength" },
-            { step: 5, title: "Open directions", desc: "One tap to navigate in Google Maps instantly" },
-          ].map((item) => (
-            <div key={item.step} className="text-center">
-              <div className="w-10 h-10 rounded-full bg-primary-500 flex items-center justify-center mx-auto mb-3">
-                <span className="text-sm font-bold text-white">{item.step}</span>
+        <ol className="divide-y divide-gray-200 border-y border-gray-200">
+          {PIPELINE_STEPS.map((item, i) => (
+            <li key={item.title} className="flex gap-4 py-4">
+              <span className="w-5 shrink-0 text-sm tabular-nums text-gray-400">
+                {i + 1}
+              </span>
+              <div>
+                <p className="text-sm font-medium text-gray-900">{item.title}</p>
+                <p className="mt-0.5 text-sm text-gray-600">{item.desc}</p>
               </div>
-              <p className="text-sm font-semibold text-gray-800 mb-1">{item.title}</p>
-              <p className="text-xs text-gray-500">{item.desc}</p>
-            </div>
+            </li>
           ))}
-        </div>
+        </ol>
       </section>
 
       {/* Why Trust */}
       <section>
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">
-          Why trust our results
+        <h2 className="mb-6 text-xl font-semibold tracking-tight text-gray-900">
+          Why trust these results
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {[
-            { icon: "🛡️", title: "Dietary Validation", desc: "Every recommendation is backed by menu evidence and certification checks from OpenStreetMap data" },
-            { icon: "📊", title: "Confidence Scoring", desc: "Transparent scores so you know how reliable each match is — no hidden algorithms" },
-            { icon: "🌍", title: "Traveler-Friendly", desc: "Perfect for navigating dietary restrictions in unfamiliar cities worldwide" },
-          ].map((item) => (
-            <div key={item.title} className="bg-white rounded-xl p-6 border border-gray-100 shadow-sm">
-              <div className="w-12 h-12 rounded-lg bg-primary-50 flex items-center justify-center text-2xl mb-4">
-                {item.icon}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          {TRUST_POINTS.map(({ Icon, title, desc }) => (
+            <Card key={title}>
+              {/* Neutral: these are category markers, not verification states,
+                  and colour in this app is reserved for the latter. */}
+              <div className="mb-4 flex h-9 w-9 items-center justify-center rounded-lg bg-gray-100">
+                <Icon size={ICON_LG} className="text-gray-700" {...iconProps} />
               </div>
-              <h3 className="text-base font-semibold text-gray-900 mb-2">{item.title}</h3>
-              <p className="text-sm text-gray-500">{item.desc}</p>
-            </div>
+              <h3 className="text-base font-semibold text-gray-900">{title}</h3>
+              <p className="mt-1.5 text-sm text-gray-600">{desc}</p>
+            </Card>
           ))}
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="bg-primary-500 rounded-2xl p-8 lg:p-12 text-center">
-        <h3 className="text-2xl font-bold text-white mb-3">
-          Ready to find your perfect meal?
-        </h3>
-        <p className="text-primary-100 mb-6 max-w-md mx-auto">
-          Describe your dietary needs and discover trusted restaurants near you.
+      {/* The limits, stated up front. This replaces a green "Ready to find your
+          perfect meal?" band -- filler on a product whose actual differentiator
+          is that it will tell you when it has nothing. */}
+      <section className="rounded-xl bg-gray-900 p-8 text-center lg:p-12">
+        <h2 className="text-xl font-semibold tracking-tight text-white">
+          What we will not do
+        </h2>
+        <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-gray-300">
+          We only show places whose OpenStreetMap dietary tags we can verify, so
+          sometimes we show you nothing. OpenStreetMap holds no allergen or
+          cross-contamination data at all — for allergies, we surface contact
+          details so you can call ahead, and we say so every time.
         </p>
-        <button
-          onClick={() => setPage("search")}
-          className="px-8 py-3 bg-white text-primary-600 font-semibold rounded-full hover:bg-primary-50 transition-colors"
-        >
-          Start Searching
-        </button>
+        <div className="mt-6 flex justify-center">
+          <Button variant="secondary" onClick={() => setPage("search")}>
+            Start searching
+          </Button>
+        </div>
+      </section>
+
+      {/* Moved out of the deleted marketing footer, where it was chrome. */}
+      <section>
+        <h2 className="mb-3 text-sm font-semibold text-gray-900">Data sources</h2>
+        <ul className="space-y-1 text-sm text-gray-600">
+          <li>Places and dietary tags: OpenStreetMap, via the Overpass API</li>
+          <li>Location lookup: Nominatim</li>
+          <li>
+            Dietary tags are added and confirmed by local OpenStreetMap mappers
+          </li>
+        </ul>
       </section>
     </div>
   );

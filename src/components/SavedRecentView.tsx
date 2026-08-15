@@ -4,7 +4,21 @@
  * Persisted saves and recent queries. Opening a saved place only sets
  * `selectedRestaurant` and switches to details — it does not re-run search.
  */
+import { History, RotateCcw, Search } from "lucide-react";
 import { useAppStore } from "@/store";
+import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
+import { Card } from "./ui/Card";
+import { EmptyState } from "./ui/EmptyState";
+import { confidenceTier, TIER_TONE } from "@/lib/confidence";
+import { formatRelativeTime, mapsDirectionsUrl, percent } from "@/lib/format";
+import {
+  ExternalIcon,
+  ICON_SM,
+  SaveIcon,
+  VerifiedIcon,
+  iconProps,
+} from "@/lib/icons";
 
 /** Saved restaurants and recent queries from localStorage. */
 export function SavedRecentView() {
@@ -26,50 +40,51 @@ export function SavedRecentView() {
     <div className="w-full max-w-3xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Saved & Recent</h1>
-        <button
-          onClick={() => setPage("search")}
-          className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors"
-        >
-          New Search
-        </button>
+        <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
+          Saved &amp; Recent
+        </h1>
+        <Button variant="primary" icon={Search} onClick={() => setPage("search")}>
+          New search
+        </Button>
       </div>
 
       {/* Recent Searches */}
-      <div className="bg-white rounded-2xl shadow-lg p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Recent Searches
+      <Card>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold tracking-tight text-gray-900">
+            Recent searches
           </h2>
           {recentSearches.length > 0 && (
-            <button
-              onClick={clearRecentSearches}
-              className="text-xs text-gray-400 hover:text-gray-600"
-            >
+            <Button variant="ghost" size="sm" onClick={clearRecentSearches}>
               Clear all
-            </button>
+            </Button>
           )}
         </div>
 
         {recentSearches.length === 0 ? (
-          <p className="text-sm text-gray-500 italic">
-            No recent searches yet. Start searching to see your history here.
-          </p>
+          <EmptyState
+            icon={History}
+            title="No recent searches yet"
+            description="Start searching to see your history here."
+          />
         ) : (
           <div className="space-y-2">
             {recentSearches.slice(0, 10).map((search) => (
               <div
                 key={search.id}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                className="flex items-center justify-between gap-3 rounded-lg bg-gray-50 p-3 transition-colors hover:bg-gray-100"
               >
-                <div>
-                  <p className="text-sm font-medium text-gray-900">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-gray-900">
                     {search.query}
                   </p>
                   <p className="text-xs text-gray-500">
                     {search.location && `${search.location} • `}
-                    {search.resultCount} results •{" "}
-                    {formatTimestamp(search.timestamp)}
+                    <span className="tabular-nums">{search.resultCount}</span>{" "}
+                    results •{" "}
+                    <time dateTime={new Date(search.timestamp).toISOString()}>
+                      {formatRelativeTime(search.timestamp)}
+                    </time>
                   </p>
                 </div>
                 <button
@@ -83,38 +98,38 @@ export function SavedRecentView() {
                     });
                     setPage("search");
                   }}
-                  className="text-xs text-primary-600 hover:text-primary-700 font-medium px-3 py-1 rounded-lg hover:bg-primary-50"
+                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-200 hover:text-gray-900"
                 >
+                  <RotateCcw size={ICON_SM} {...iconProps} />
                   Rerun
                 </button>
               </div>
             ))}
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Saved Restaurants */}
-      <div className="bg-white rounded-2xl shadow-lg p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          Saved Restaurants ({savedRestaurants.length})
+      <Card>
+        <h2 className="mb-4 text-lg font-semibold tracking-tight text-gray-900">
+          Saved restaurants (
+          <span className="tabular-nums">{savedRestaurants.length}</span>)
         </h2>
 
         {savedRestaurants.length === 0 ? (
-          <p className="text-sm text-gray-500 italic">
-            No saved restaurants yet. Save restaurants from the results page to
-            access them quickly here.
-          </p>
+          <EmptyState
+            icon={SaveIcon}
+            title="No saved restaurants yet"
+            description="Save restaurants from the results page to access them quickly here."
+          />
         ) : (
           <div className="space-y-3">
             {savedRestaurants.map((saved) => {
               const { restaurant, confidence } = saved.recommendation;
               return (
-                <div
-                  key={saved.id}
-                  className="p-4 border border-gray-100 rounded-xl hover:shadow-sm transition-shadow"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
+                <Card key={saved.id} padding="sm" interactive>
+                  <div className="mb-2 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
                       <h3 className="font-medium text-gray-900">
                         {restaurant.name}
                       </h3>
@@ -122,62 +137,60 @@ export function SavedRecentView() {
                         {restaurant.address}
                       </p>
                     </div>
-                    <span className="px-2 py-0.5 bg-primary-50 text-primary-700 text-xs rounded-full font-medium">
-                      {Math.round(confidence.overall * 100)}% match
-                    </span>
+                    <Badge
+                      tone={TIER_TONE[confidenceTier(confidence.overall)]}
+                      className="shrink-0 tabular-nums"
+                    >
+                      {percent(confidence.overall)}% match
+                    </Badge>
                   </div>
 
-                  <div className="flex flex-wrap gap-1 mb-3">
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    {/* Same claim, same treatment as the results card. These
+                        used to render grey here and green there. */}
                     {restaurant.dietaryOptions.slice(0, 4).map((opt) => (
-                      <span
-                        key={opt}
-                        className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full"
-                      >
+                      <Badge key={opt} tone="verified" icon={VerifiedIcon}>
                         {opt}
-                      </span>
+                      </Badge>
                     ))}
                   </div>
 
-                  <div className="flex items-center gap-3">
-                    <button
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => handleViewDetails(saved)}
-                      className="text-xs font-medium text-primary-600 hover:text-primary-700"
                     >
-                      View Details
-                    </button>
-                    <a
-                      href={`https://www.google.com/maps/dir/?api=1&destination=${restaurant.location.lat},${restaurant.location.lng}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                      View details
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={ExternalIcon}
+                      href={mapsDirectionsUrl(
+                        restaurant.location.lat,
+                        restaurant.location.lng
+                      )}
                     >
-                      Show on Map
-                    </a>
-                    <button
+                      Show on map
+                    </Button>
+                    <Button
+                      variant="danger-ghost"
+                      size="sm"
                       onClick={() => unsaveRestaurant(saved.id)}
-                      className="ml-auto text-xs text-gray-400 hover:text-red-500"
+                      aria-label={`Remove ${restaurant.name} from saved`}
+                      className="ml-auto"
                     >
                       Remove
-                    </button>
+                    </Button>
                   </div>
-                </div>
+                </Card>
               );
             })}
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }
 
-function formatTimestamp(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  return `${days}d ago`;
-}

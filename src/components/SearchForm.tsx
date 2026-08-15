@@ -6,7 +6,14 @@
  * filtered on would look "active" while changing nothing.
  */
 import { useState } from "react";
+import { ArrowUpRight, Search, X } from "lucide-react";
 import { EXAMPLE_PROMPTS, SEARCH_PLACEHOLDER } from "@/lib/prompts";
+import { Alert } from "./ui/Alert";
+import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
+import { Chip } from "./ui/Chip";
+import { Field, Input, Textarea } from "./ui/Field";
+import { ICON_SM, LocationIcon, SafetyIcon, iconProps } from "@/lib/icons";
 
 interface SearchFormProps {
   onSubmit: (data: {
@@ -29,18 +36,21 @@ interface SearchFormProps {
   };
 }
 
-// Every value here must be a key of DIETARY_KEYWORDS in dietary-intent-agent.ts,
-// and every one of these maps to a diet:* tag we can actually filter on in
+// Every value here must be a known need in api/_lib/tools/diet_tags.py, and
+// every one of these maps to a diet:* tag we can actually filter on in
 // OpenStreetMap. Chips for things OSM cannot express (high-protein, jain,
 // open-now, cuisine families) would render back to the user as an "active
 // filter" that filtered nothing.
+// Labels are text only. These previously carried emoji, including ☪️ and ✡️
+// used as decoration for halal and kosher -- religious symbols reduced to
+// ornament, and rendered differently on every operating system.
 const QUICK_FILTERS = [
-  { label: "🥬 Vegan", value: "vegan" },
-  { label: "🥗 Vegetarian", value: "vegetarian" },
-  { label: "🚫 Gluten-Free", value: "gluten-free" },
-  { label: "🥛 Dairy-Free", value: "dairy-free" },
-  { label: "☪️ Halal", value: "halal" },
-  { label: "✡️ Kosher", value: "kosher" },
+  { label: "Vegan", value: "vegan" },
+  { label: "Vegetarian", value: "vegetarian" },
+  { label: "Gluten-free", value: "gluten-free" },
+  { label: "Dairy-free", value: "dairy-free" },
+  { label: "Halal", value: "halal" },
+  { label: "Kosher", value: "kosher" },
 ];
 
 
@@ -94,149 +104,154 @@ export function SearchForm({ onSubmit, isLoading, initial }: SearchFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Main Input + Location - side by side on desktop */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 relative">
-          <textarea
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={SEARCH_PLACEHOLDER}
-            className="w-full px-5 py-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none text-sm resize-none h-28 bg-white shadow-sm"
-            required
-          />
-          <button
-            type="submit"
-            disabled={isLoading || !query.trim()}
-            className="absolute bottom-3 right-3 w-10 h-10 rounded-full bg-primary-500 hover:bg-primary-600 disabled:bg-gray-300 text-white flex items-center justify-center transition-colors shadow-md"
-            aria-label="Search"
-          >
-            {isLoading ? (
-              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-              </svg>
-            )}
-          </button>
-        </div>
-
-        <div className="space-y-3">
-          {/* Location */}
-          <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center gap-2 shadow-sm">
-            <span className="text-primary-500 text-sm">📍</span>
-            <input
-              type="text"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="Enter city or address"
-              className="flex-1 text-sm text-gray-700 bg-transparent outline-none"
+      {/* Main Input + Location - side by side on desktop.
+          There used to be a second submit button floating inside the textarea:
+          two type="submit" controls on one form, same disabled rule, same
+          action. One submit, and it says what it does. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Field
+          label="What do you need"
+          className="lg:col-span-2"
+        >
+          {(field) => (
+            <Textarea
+              {...field}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={SEARCH_PLACEHOLDER}
+              className="h-28"
+              required
             />
-            {location && (
-              <button type="button" onClick={() => setLocation("")} className="text-xs text-primary-500 font-semibold">
-                Clear
-              </button>
-            )}
-          </div>
+          )}
+        </Field>
 
-          {/* Submit */}
-          <button
+        <div className="flex flex-col gap-3">
+          <Field label="Location" hint="A city or address. We geocode it before searching.">
+            {(field) => (
+              <div className="relative">
+                <LocationIcon
+                  size={ICON_SM}
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+                  {...iconProps}
+                />
+                <Input
+                  {...field}
+                  type="text"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="Enter city or address"
+                  className="pl-8 pr-14"
+                />
+                {location && (
+                  <button
+                    type="button"
+                    onClick={() => setLocation("")}
+                    aria-label="Clear location"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-xs font-medium text-gray-500 hover:text-gray-900"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            )}
+          </Field>
+
+          <Button
             type="submit"
+            variant="primary"
+            icon={Search}
+            loading={isLoading}
             disabled={isLoading || !query.trim()}
-            className="w-full py-3 bg-primary-500 hover:bg-primary-600 disabled:bg-gray-300 text-white font-semibold rounded-full transition-colors text-sm"
+            className="w-full"
           >
-            {isLoading ? "Searching..." : "Search with AI"}
-          </button>
+            {isLoading ? "Searching…" : "Search"}
+          </Button>
         </div>
       </div>
 
       {/* Quick Filters */}
-      <div>
-        <p className="text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wide">
-          Quick Filters
-        </p>
+      <fieldset>
+        <legend className="mb-2 text-xs font-medium text-gray-700">
+          Quick dietary filters
+        </legend>
         <div className="flex flex-wrap gap-2">
           {QUICK_FILTERS.map((filter) => (
-            <button
+            <Chip
               key={filter.value}
-              type="button"
-              onClick={() => toggleFilter(filter.value)}
-              className={`px-4 py-2 rounded-full text-xs font-medium transition-all ${
-                selectedFilters.includes(filter.value)
-                  ? "bg-primary-500 text-white shadow-sm"
-                  : "bg-white border border-gray-200 text-gray-700 hover:border-primary-300 hover:shadow-sm"
-              }`}
+              selected={selectedFilters.includes(filter.value)}
+              onToggle={() => toggleFilter(filter.value)}
+              showCheck
             >
               {filter.label}
-            </button>
+            </Chip>
           ))}
         </div>
-      </div>
+      </fieldset>
 
       {/* Allergies */}
       <div>
-        <p className="text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wide">
-          Allergies
-        </p>
         <div className="flex flex-wrap items-center gap-2">
           {allergies.map((allergy) => (
-            <span
-              key={allergy}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200"
-            >
+            <Badge key={allergy} tone="danger">
               {allergy}
               <button
                 type="button"
                 onClick={() =>
                   setAllergies((prev) => prev.filter((a) => a !== allergy))
                 }
-                className="text-red-400 hover:text-red-700"
+                className="-mr-0.5 ml-0.5 rounded text-danger-600 hover:text-danger-800"
                 aria-label={`Remove ${allergy}`}
               >
-                ×
+                <X size={ICON_SM} {...iconProps} />
               </button>
-            </span>
+            </Badge>
           ))}
-          <input
-            type="text"
-            value={allergyDraft}
-            onChange={(e) => setAllergyDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === ",") {
-                e.preventDefault();
-                addAllergy();
-              }
-            }}
-            onBlur={addAllergy}
-            placeholder="e.g. peanuts — press Enter"
-            className="px-3 py-1.5 border border-gray-200 rounded-full text-xs bg-white shadow-sm outline-none focus:ring-2 focus:ring-primary-500 min-w-[12rem]"
-          />
+          <Field label="Allergies" labelHidden className="min-w-0">
+            {(field) => (
+              <Input
+                {...field}
+                type="text"
+                value={allergyDraft}
+                onChange={(e) => setAllergyDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === ",") {
+                    e.preventDefault();
+                    addAllergy();
+                  }
+                }}
+                onBlur={addAllergy}
+                placeholder="Allergies — e.g. peanuts, press Enter"
+                className="w-64"
+              />
+            )}
+          </Field>
         </div>
         {allergies.length > 0 && (
-          <p className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-            ⚠️ OpenStreetMap has no allergen or cross-contamination data, so we
+          <Alert tone="danger" icon={SafetyIcon} className="mt-3">
+            OpenStreetMap has no allergen or cross-contamination data, so we
             cannot verify allergy safety. We use this only to surface contact
             details so you can call ahead — always tell staff directly.
-          </p>
+          </Alert>
         )}
       </div>
 
       {/* Example Prompts */}
       <div>
-        <p className="text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wide">
-          Try These Prompts
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <p className="mb-2 text-xs font-medium text-gray-700">Try one of these</p>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           {EXAMPLE_PROMPTS.map((prompt) => (
             <button
               key={prompt}
               type="button"
               onClick={() => handlePromptClick(prompt)}
-              className="text-left px-4 py-3 bg-white border border-gray-200 rounded-xl text-xs text-gray-600 hover:border-primary-300 hover:bg-primary-50 transition-all shadow-sm"
+              className="group flex items-start justify-between gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-left text-xs text-gray-600 transition-colors hover:border-gray-300 hover:text-gray-900"
             >
-              {`"${prompt}"`}
+              {prompt}
+              <ArrowUpRight
+                size={ICON_SM}
+                className="mt-0.5 shrink-0 text-gray-300 transition-colors group-hover:text-gray-500"
+                {...iconProps}
+              />
             </button>
           ))}
         </div>
