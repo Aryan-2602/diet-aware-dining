@@ -19,6 +19,8 @@ import { ResultsMapView } from "@/components/ResultsMapView";
 import { RestaurantDetails } from "@/components/RestaurantDetails";
 import { SavedRecentView } from "@/components/SavedRecentView";
 import { Navigation } from "@/components/Navigation";
+import { cn } from "@/lib/cn";
+import { ExternalIcon, ICON_MD, ICON_SM, LocationIcon, iconProps } from "@/lib/icons";
 import {
   AgentName,
   ClarificationQuestion,
@@ -239,15 +241,16 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Desktop Header */}
-      <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-gray-100">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
+    <div className="min-h-screen">
+      <header className="sticky top-0 z-50 border-b border-gray-200 bg-white/80 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2">
-            <span className="text-primary-500 text-xl">📍</span>
-            <span className="text-xl font-bold text-gray-900">Dietary Maps AI</span>
+            <LocationIcon size={ICON_MD} className="text-gray-900" {...iconProps} />
+            <span className="text-[15px] font-semibold tracking-tight text-gray-900">
+              Dietary Maps AI
+            </span>
           </div>
-          <nav className="hidden md:flex items-center gap-6">
+          <nav aria-label="Primary" className="hidden items-center gap-6 md:flex">
             <NavLink active={currentPage === "landing"} onClick={() => setPage("landing")}>Home</NavLink>
             <NavLink active={currentPage === "search"} onClick={() => setPage("search")}>Search</NavLink>
             <NavLink active={currentPage === "results"} onClick={() => setPage("results")}>Results</NavLink>
@@ -257,7 +260,11 @@ export default function Home() {
       </header>
 
       {/* Page Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24 md:pb-8">
+      <main
+        id="main"
+        tabIndex={-1}
+        className="mx-auto max-w-7xl px-4 pb-24 pt-6 sm:px-6 md:pb-8 lg:px-8"
+      >
         {currentPage === "landing" && <LandingPage />}
 
         {currentPage === "search" && (
@@ -318,44 +325,30 @@ export default function Home() {
         {currentPage === "saved" && <SavedRecentView />}
       </main>
 
-      {/* The full footer is ~366px and rendered under every screen,
-          including mid-search. It is marketing chrome, so it belongs on
-          the landing page; everywhere else gets one attribution line. */}
-      {currentPage === "landing" ? (
-      <footer className="bg-gray-900 text-gray-400 mt-16 pb-20 md:pb-0">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-primary-500">📍</span>
-                <span className="text-lg font-bold text-white">Dietary Maps AI</span>
-              </div>
-              <p className="text-sm">
-                Discover restaurants that match your complex dietary needs — powered by AI, navigated with Google Maps.
-              </p>
-            </div>
-            <div>
-              <h4 className="text-sm font-semibold text-gray-200 mb-3">Data Sources</h4>
-              <div className="space-y-2 text-sm">
-                <p>OpenStreetMap via Overpass API</p>
-                <p>Nominatim Geocoding</p>
-                <p>Community-verified dietary tags</p>
-              </div>
-            </div>
-          </div>
-          <div className="border-t border-gray-700 mt-8 pt-6 text-xs text-center text-gray-500">
-            © 2024 Dietary Maps AI. Data from OpenStreetMap contributors.
-          </div>
-        </div>
+      {/* One footer for every screen.
+          The dark marketing variant that used to render on the landing page was
+          366px of chrome duplicating the header's brand lockup, and it carried a
+          hardcoded copyright year that had already gone stale. Attribution is
+          the obligation that actually matters here -- the app holds no copyright
+          in the data it displays -- so that is all this carries. The data-source
+          detail moved to the landing page, where it reads as a trust signal. */}
+      <footer className="mt-8 border-t border-gray-200 py-4 pb-24 md:pb-4">
+        <p className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-2 gap-y-1 px-4 text-xs text-gray-500 sm:px-6 lg:px-8">
+          <span>Data © OpenStreetMap contributors</span>
+          <span aria-hidden="true">·</span>
+          <span>Geocoding by Nominatim</span>
+          <span aria-hidden="true">·</span>
+          <a
+            href="https://wiki.openstreetmap.org/wiki/Key:diet"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-source-600 hover:text-source-700 hover:underline"
+          >
+            Dietary tags: OSM diet:* keys
+            <ExternalIcon size={ICON_SM} {...iconProps} />
+          </a>
+        </p>
       </footer>
-      ) : (
-        <footer className="border-t border-gray-100 mt-8 py-6 pb-24 md:pb-6">
-          <p className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-xs text-gray-400">
-            Data from OpenStreetMap contributors, via the Overpass API and
-            Nominatim.
-          </p>
-        </footer>
-      )}
 
       {/* Mobile Navigation (hidden on desktop) */}
       <div className="md:hidden">
@@ -370,11 +363,21 @@ function NavLink({ active, onClick, children }: { active: boolean; onClick: () =
   return (
     <button
       onClick={onClick}
-      className={`text-sm font-medium transition-colors ${
-        active ? "text-primary-600" : "text-gray-600 hover:text-gray-900"
-      }`}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "relative py-4 text-sm font-medium transition-colors",
+        active ? "text-gray-900" : "text-gray-600 hover:text-gray-900"
+      )}
     >
       {children}
+      {/* An ink rule rather than coloured text: colour in this app is reserved
+          for what we can and cannot verify. */}
+      {active && (
+        <span
+          aria-hidden="true"
+          className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-gray-900"
+        />
+      )}
     </button>
   );
 }
