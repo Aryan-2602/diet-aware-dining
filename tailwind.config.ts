@@ -26,16 +26,6 @@ const config: Config = {
         // `text-gray-500` across the components sharpens with no edit.
         gray: colors.zinc,
 
-        /**
-         * Retained only so the migration never breaks: every `primary-*` class
-         * still resolves while components are ported one at a time. Pointed at
-         * the semantic green so it already reads correctly. Deleted, behind a
-         * grep gate, once no component references it.
-         *
-         * @deprecated Use `verified` for meaning, or ink for actions.
-         */
-        primary: colors.emerald,
-
         /** A claim OpenStreetMap confirms; confidence tier "high". Nothing else. */
         verified: colors.emerald,
         /** Tier "medium", `warnings[]`, unenforceable needs, clarification. */

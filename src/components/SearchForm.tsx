@@ -190,6 +190,11 @@ export function SearchForm({ onSubmit, isLoading, initial }: SearchFormProps) {
 
       {/* Allergies */}
       <div>
+        {/* A visible heading, because without one the input read as an
+            unexplained box floating between two labelled sections. The Field's
+            own label stays hidden so the control is still named for
+            assistive tech without repeating this heading. */}
+        <p className="mb-2 text-xs font-medium text-gray-700">Allergies</p>
         <div className="flex flex-wrap items-center gap-2">
           {allergies.map((allergy) => (
             <Badge key={allergy} tone="danger">

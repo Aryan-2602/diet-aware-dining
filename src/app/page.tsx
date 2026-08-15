@@ -227,7 +227,7 @@ export default function Home() {
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2">
             <LocationIcon size={ICON_MD} className="text-gray-900" {...iconProps} />
-            <span className="text-[15px] font-semibold tracking-tight text-gray-900">
+            <span className="text-lg font-semibold tracking-tight text-gray-900">
               Dietary Maps AI
             </span>
           </div>
